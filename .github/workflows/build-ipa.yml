@@ -8,6 +8,7 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
+  SOURCE_ZIP: iOSModularHUD-max-ipa-fixed.zip
 
 jobs:
   build:
@@ -15,8 +16,90 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Locate and extract MAX source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "===== REPOSITORY ====="
+          find . -maxdepth 2 -type f -not -path './.git/*' | sort
+
+          echo
+          echo "===== SEARCH ZIP ====="
+
+          ZIP=""
+
+          if [ -f "$SOURCE_ZIP" ]; then
+            ZIP="$SOURCE_ZIP"
+          else
+            ZIP="$(find . -maxdepth 3 -type f -name "$SOURCE_ZIP" -print -quit)"
+          fi
+
+          if [ -z "$ZIP" ]; then
+            echo "::error::Não encontrei $SOURCE_ZIP"
+            exit 1
+          fi
+
+          echo "ZIP encontrado:"
+          echo "$ZIP"
+
+          rm -rf "$GITHUB_WORKSPACE/source"
+          mkdir -p "$GITHUB_WORKSPACE/source"
+
+          echo
+          echo "===== EXTRAINDO ====="
+
+          unzip -q "$ZIP" \
+            -d "$GITHUB_WORKSPACE/source"
+
+          echo
+          echo "===== CONTEÚDO EXTRAÍDO ====="
+
+          find "$GITHUB_WORKSPACE/source" \
+            -maxdepth 4 \
+            -type f \
+            | sort
+
+          echo
+          echo "===== LOCALIZANDO APP ====="
+
+          APP_DIR="$(
+            find "$GITHUB_WORKSPACE/source" \
+              -type f \
+              -path '*/App/Makefile' \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$APP_DIR" ]; then
+            echo "::error::App/Makefile não encontrado dentro do ZIP."
+            exit 1
+          fi
+
+          APP_DIR="$(dirname "$APP_DIR")"
+
+          PROJECT_ROOT="$(
+            cd "$APP_DIR/.." >/dev/null 2>&1
+            pwd
+          )"
+
+          if [ ! -d "$PROJECT_ROOT/Shared" ]; then
+            echo "::error::Pasta Shared/ não encontrada junto com App/."
+            exit 1
+          fi
+
+          echo "App encontrado em:"
+          echo "$APP_DIR"
+
+          echo
+          echo "Projeto encontrado em:"
+          echo "$PROJECT_ROOT"
+
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
       - name: Configure Xcode
         shell: bash
@@ -36,7 +119,7 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
           xcrun --sdk iphoneos --show-sdk-version
 
-      - name: Install build dependencies
+      - name: Install dependencies
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -70,6 +153,7 @@ jobs:
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
+          echo
           echo "Theos instalado."
 
       - name: Install Theos iPhoneOS 15.6 SDK
@@ -87,29 +171,32 @@ jobs:
             https://github.com/theos/sdks.git \
             "$GITHUB_WORKSPACE/theos-sdks"
 
-          if [ ! -d "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" ]; then
+          SDK="$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk"
+
+          if [ ! -d "$SDK" ]; then
             echo "::error::iPhoneOS15.6.sdk não encontrado."
             exit 1
           fi
 
           cp -R \
-            "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" \
+            "$SDK" \
             "$THEOS/sdks/"
 
           test -d "$THEOS/sdks/iPhoneOS15.6.sdk"
 
           echo
-          echo "SDK instalado:"
+          echo "===== THEOS SDK ====="
           ls -ld "$THEOS/sdks/iPhoneOS15.6.sdk"
 
-      - name: Validate MAX source
+      - name: Validate extracted MAX source
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "===== SOURCE ====="
-          find App Shared \
-            -maxdepth 3 \
+
+          find "$PROJECT_ROOT" \
+            -maxdepth 4 \
             -type f \
             | sort
 
@@ -117,19 +204,19 @@ jobs:
           echo "===== REQUIRED FILES ====="
 
           required=(
-            "App/Makefile"
-            "App/main.m"
-            "App/AppDelegate.h"
-            "App/AppDelegate.m"
-            "App/Resources/Info.plist"
-            "App/Core/FeatureManager.h"
-            "App/Core/FeatureManager.mm"
-            "App/Menu/Menu.h"
-            "App/Menu/Menu.mm"
-            "App/Overlay/Overlay.h"
-            "App/Overlay/Overlay.mm"
-            "Shared/HUDCapabilities.h"
-            "Shared/HUDCapabilities.mm"
+            "$PROJECT_ROOT/App/Makefile"
+            "$PROJECT_ROOT/App/main.m"
+            "$PROJECT_ROOT/App/AppDelegate.h"
+            "$PROJECT_ROOT/App/AppDelegate.m"
+            "$PROJECT_ROOT/App/Resources/Info.plist"
+            "$PROJECT_ROOT/App/Core/FeatureManager.h"
+            "$PROJECT_ROOT/App/Core/FeatureManager.mm"
+            "$PROJECT_ROOT/App/Menu/Menu.h"
+            "$PROJECT_ROOT/App/Menu/Menu.mm"
+            "$PROJECT_ROOT/App/Overlay/Overlay.h"
+            "$PROJECT_ROOT/App/Overlay/Overlay.mm"
+            "$PROJECT_ROOT/Shared/HUDCapabilities.h"
+            "$PROJECT_ROOT/Shared/HUDCapabilities.mm"
           )
 
           for file in "${required[@]}"; do
@@ -144,33 +231,36 @@ jobs:
           echo
           echo "===== INFO.PLIST ====="
 
-          plutil -lint App/Resources/Info.plist
+          plutil -lint \
+            "$PROJECT_ROOT/App/Resources/Info.plist"
 
-      - name: Check Makefile
+      - name: Prepare Theos build
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          echo "===== APP MAKEFILE ====="
-          cat App/Makefile
+          echo "===== MAKEFILE ====="
+          cat "$PROJECT_ROOT/App/Makefile"
+
+          echo
+          echo "===== CHECK SETTINGS ====="
 
           grep -q \
             'TARGET := iphone:clang:15.6:15.0' \
-            App/Makefile
+            "$PROJECT_ROOT/App/Makefile"
 
           grep -q \
             'ARCHS := arm64' \
-            App/Makefile
+            "$PROJECT_ROOT/App/Makefile"
 
           grep -q \
             'PACKAGE_FORMAT := ipa' \
-            App/Makefile
+            "$PROJECT_ROOT/App/Makefile"
 
-          echo
           echo "Makefile OK."
 
-      - name: Build MAX IPA
-        working-directory: App
+      - name: Build IPA
+        working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -178,6 +268,10 @@ jobs:
           echo "======================================"
           echo "       iOSModularHUD MAX IPA"
           echo "======================================"
+
+          echo
+          echo "Source:"
+          echo "$PROJECT_ROOT"
 
           echo
           echo "SDK: 15.6"
@@ -202,7 +296,7 @@ jobs:
             messages=yes
 
           echo
-          echo "===== GENERATED FILES ====="
+          echo "===== GENERATED PACKAGES ====="
 
           find packages \
             -maxdepth 1 \
@@ -230,19 +324,17 @@ jobs:
 
           echo
           echo "IPA criada:"
-          ls -lh "$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
+          ls -lh \
+            "$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
 
       - name: Validate IPA
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          IPA="output/iOSModularHUD-MAX.ipa"
+          IPA="$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
 
-          if [ ! -s "$IPA" ]; then
-            echo "::error::IPA vazia ou inexistente."
-            exit 1
-          fi
+          test -s "$IPA"
 
           echo "===== ZIP TEST ====="
 
@@ -283,7 +375,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Final information
+      - name: Build result
         shell: bash
         run: |
           echo "======================================"
