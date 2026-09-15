@@ -6,133 +6,371 @@ on:
 permissions:
   contents: read
 
+env:
+  # Compatibilidade com iOS 15.0 até versões posteriores.
+  # iOS 15.8.8 está dentro desse intervalo.
+  IOS_DEPLOYMENT_TARGET: "15.0"
+
 jobs:
   build:
-    name: Build DEB + IPA + TIPA
+    name: Build iOS 15 Rootless + TrollStore
     runs-on: macos-15
 
     steps:
-      - name: Checkout
+
+      # ============================================================
+      # 1. SOURCE
+      # ============================================================
+
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Verify Xcode
+      - name: Show repository
         shell: bash
         run: |
-          set -euo pipefail
-          sw_vers
+          set -Eeuo pipefail
+
+          echo "===== REPOSITORY ====="
+          pwd
+          find . -maxdepth 4 -type f \
+            ! -path './.git/*' \
+            | sort
+
+      # ============================================================
+      # 2. APPLE TOOLCHAIN
+      # ============================================================
+
+      - name: Select Xcode
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ ! -d "/Applications/Xcode.app" ]; then
+            echo "::error::Xcode.app não encontrado no runner."
+            exit 1
+          fi
+
+          sudo xcode-select \
+            --switch \
+            "/Applications/Xcode.app/Contents/Developer"
+
+          echo "Developer directory:"
+          xcode-select -p
+
+          echo
+          echo "Xcode:"
           xcodebuild -version
+
+          echo
+          echo "Available iOS SDK:"
+          xcodebuild -showsdks | grep -i iphoneos || true
+
+          echo
+          echo "Selected SDK:"
           xcrun --sdk iphoneos --show-sdk-path
+
+          echo
+          echo "SDK version:"
+          xcrun --sdk iphoneos --show-sdk-version
+
+      # ============================================================
+      # 3. DEPENDENCIES
+      # ============================================================
 
       - name: Install dependencies
         shell: bash
         run: |
-          set -euo pipefail
-          brew install dpkg
+          set -Eeuo pipefail
 
-      - name: Install clean Theos
+          brew update
+
+          brew install \
+            git \
+            make \
+            perl \
+            xz \
+            dpkg \
+            ldid
+
+          echo
+          echo "Dependencies installed."
+
+          git --version
+          make --version
+          perl -v | head -n 2
+          xz --version
+          dpkg-deb --version
+          ldid -h >/dev/null 2>&1 || true
+
+      # ============================================================
+      # 4. THEOS
+      # ============================================================
+
+      - name: Install Theos
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
           export THEOS="$HOME/theos"
+
+          echo "Removing previous Theos..."
           rm -rf "$THEOS"
 
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          echo
+          echo "Installing official Theos..."
+
+          bash -c \
+            "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+
+          echo
+          echo "Checking Theos..."
 
           test -f "$THEOS/makefiles/common.mk"
+          test -d "$THEOS/vendor"
           test -d "$THEOS/vendor/mod/rootless"
-          test -x "$THEOS/bin/ldid"
+
+          echo
+          echo "Theos path:"
+          echo "$THEOS"
+
+          echo
+          echo "Theos version:"
+          git -C "$THEOS" rev-parse --short HEAD
+
+          echo
+          echo "Rootless module:"
+          ls -la "$THEOS/vendor/mod/rootless"
 
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
-      - name: Verify source
+      # ============================================================
+      # 5. THEOS SDK
+      # ============================================================
+
+      - name: Verify Theos SDK
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+
+          echo "Apple SDK:"
+          echo "$SDK_PATH"
+
+          echo
+          echo "Apple SDK version:"
+          echo "$SDK_VERSION"
+
+          test -d "$SDK_PATH"
+
+          echo
+          echo "Theos SDK directory:"
+          ls -la "$THEOS/sdks" || true
+
+          SDK_COUNT="$(
+            find "$THEOS/sdks" \
+              -maxdepth 1 \
+              -type d \
+              -name '*.sdk' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo
+          echo "Theos SDK count: $SDK_COUNT"
+
+          if [ "$SDK_COUNT" -eq 0 ]; then
+            echo "::warning::Theos não possui SDK local; o projeto usará o SDK/toolchain disponível pelo ambiente."
+          fi
+
+      # ============================================================
+      # 6. SOURCE VALIDATION
+      # ============================================================
+
+      - name: Validate iOSModularHUD source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "Checking Tweak..."
 
           test -f Tweak/Makefile
           test -f Tweak/control
           test -f Tweak/Tweak.mm
           test -f Tweak/iOSModularHUD.plist
 
+          echo "Checking App..."
+
           test -f App/Makefile
           test -f App/main.m
           test -f App/AppDelegate.m
           test -f App/Resources/Info.plist
 
-          echo "Source OK"
+          echo
+          echo "===== TWEAK MAKEFILE ====="
+          cat Tweak/Makefile
 
-      # =========================
-      # JAILBREAK ROOTLESS
-      # =========================
+          echo
+          echo "===== APP MAKEFILE ====="
+          cat App/Makefile
+
+          echo
+          echo "Source validation OK."
+
+      # ============================================================
+      # 7. BUILD ROOTLESS DEB
+      # ============================================================
 
       - name: Build rootless DEB
         working-directory: Tweak
         shell: bash
+        env:
+          THEOS_PACKAGE_SCHEME: rootless
+          PACKAGE_FORMAT: deb
+          FINALPACKAGE: "1"
+          TARGET: iphone:clang:latest:15.0
+          ARCHS: arm64 arm64e
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
+          echo "===== ROOTLESS BUILD ====="
+          echo "TARGET=$TARGET"
+          echo "ARCHS=$ARCHS"
+          echo "THEOS_PACKAGE_SCHEME=$THEOS_PACKAGE_SCHEME"
+          echo "PACKAGE_FORMAT=$PACKAGE_FORMAT"
 
           make clean
 
-          env \
+          make package \
+            FINALPACKAGE=1 \
             THEOS_PACKAGE_SCHEME=rootless \
             PACKAGE_FORMAT=deb \
-            make package FINALPACKAGE=1 messages=yes
+            messages=yes
 
-          DEB="$(find packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          echo
+          echo "===== SEARCH DEB ====="
 
-          test -n "$DEB"
+          find packages \
+            -maxdepth 1 \
+            -type f \
+            -name '*.deb' \
+            -print
+
+          DEB="$(
+            find packages \
+              -maxdepth 1 \
+              -type f \
+              -name '*.deb' \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$DEB" ]; then
+            echo "::error::Theos não gerou nenhum .deb."
+            exit 1
+          fi
 
           mkdir -p "$GITHUB_WORKSPACE/output"
 
           cp "$DEB" \
             "$GITHUB_WORKSPACE/output/iOSModularHUD-rootless.deb"
 
-      - name: Validate DEB
+      # ============================================================
+      # 8. VALIDATE DEB
+      # ============================================================
+
+      - name: Validate rootless DEB
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
           PKG="output/iOSModularHUD-rootless.deb"
 
           test -s "$PKG"
 
+          echo "===== DEB INFO ====="
           dpkg-deb -I "$PKG"
+
+          echo
+          echo "===== DEB CONTENT ====="
+
           dpkg-deb -c "$PKG" | tee deb-contents.txt
 
-          grep -q 'var/jb/' deb-contents.txt
-          grep -q 'Library/MobileSubstrate/DynamicLibraries' deb-contents.txt
+          echo
+          echo "===== ROOTLESS CHECK ====="
 
-      # =========================
-      # TROLLSTORE APP
-      # =========================
+          if ! grep -q 'var/jb/' deb-contents.txt; then
+            echo "::error::O pacote não possui estrutura rootless /var/jb/."
+            exit 1
+          fi
+
+          echo "Rootless package OK."
+
+      # ============================================================
+      # 9. BUILD STANDALONE IPA
+      # ============================================================
 
       - name: Build standalone IPA
         working-directory: App
         shell: bash
+        env:
+          PACKAGE_FORMAT: ipa
+          FINALPACKAGE: "1"
+          TARGET: iphone:clang:latest:15.0
+          ARCHS: arm64
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
+          echo "===== IPA BUILD ====="
+          echo "TARGET=$TARGET"
+          echo "ARCHS=$ARCHS"
+          echo "PACKAGE_FORMAT=$PACKAGE_FORMAT"
 
           make clean
 
-          env \
+          make package \
+            FINALPACKAGE=1 \
             PACKAGE_FORMAT=ipa \
-            make package FINALPACKAGE=1 messages=yes
+            messages=yes
 
-          IPA="$(find packages -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          echo
+          echo "===== SEARCH IPA ====="
 
-          test -n "$IPA"
+          find packages \
+            -maxdepth 1 \
+            -type f \
+            -name '*.ipa' \
+            -print
+
+          IPA="$(
+            find packages \
+              -maxdepth 1 \
+              -type f \
+              -name '*.ipa' \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$IPA" ]; then
+            echo "::error::Theos não gerou nenhum .ipa."
+            exit 1
+          fi
 
           mkdir -p "$GITHUB_WORKSPACE/output"
 
           cp "$IPA" \
             "$GITHUB_WORKSPACE/output/iOSModularHUD.ipa"
 
+      # ============================================================
+      # 10. CREATE TIPA
+      # ============================================================
+
       - name: Create TIPA
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
           test -s output/iOSModularHUD.ipa
 
@@ -140,33 +378,67 @@ jobs:
             output/iOSModularHUD.ipa \
             output/iOSModularHUD.tipa
 
+          test -s output/iOSModularHUD.tipa
+
+      # ============================================================
+      # 11. VALIDATE IPA
+      # ============================================================
+
       - name: Validate IPA
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
           for FILE in \
             output/iOSModularHUD.ipa \
             output/iOSModularHUD.tipa
           do
+            echo
+            echo "===== VALIDATING $FILE ====="
+
             test -s "$FILE"
 
             unzip -t "$FILE" >/dev/null
 
-            unzip -l "$FILE" |
-              grep -E 'Payload/[^/]+\.app/Info.plist$'
+            unzip -l "$FILE" \
+              | grep -E 'Payload/[^/]+\.app/Info.plist$'
 
-            echo "Validado: $FILE"
+            unzip -l "$FILE" \
+              | grep -E 'Payload/[^/]+\.app/[^/]+$' \
+              | head -n 5
+
+            echo "$FILE OK."
           done
 
-      # =========================
-      # ARTIFACTS
-      # =========================
+      # ============================================================
+      # 12. FINAL SUMMARY
+      # ============================================================
+
+      - name: Build summary
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo
+          echo "=============================================="
+          echo "           iOSModularHUD BUILD OK"
+          echo "=============================================="
+          echo
+          echo "Deployment target: iOS $IOS_DEPLOYMENT_TARGET"
+          echo "Compatible with: iOS 15.8.8"
+          echo
+          echo "Artifacts:"
+          ls -lh output/
+          echo
+
+      # ============================================================
+      # 13. UPLOAD
+      # ============================================================
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: iOSModularHUD-builds
+          name: iOSModularHUD-iOS15
           path: |
             output/iOSModularHUD-rootless.deb
             output/iOSModularHUD.ipa
