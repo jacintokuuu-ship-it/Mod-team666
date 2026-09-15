@@ -1,0 +1,36 @@
+name: ZIP para IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar arquivos
+        uses: actions/checkout@v4
+
+      - name: Preparar IPA
+        run: |
+          mkdir -p output
+          unzip -q IOSModularHUD.zip -d extracted
+
+          mkdir -p Payload
+
+          APP=$(find extracted -type d -name "*.app" | head -n 1)
+
+          if [ -z "$APP" ]; then
+            echo "Nenhum arquivo .app encontrado no ZIP."
+            exit 1
+          fi
+
+          cp -R "$APP" Payload/
+
+          zip -r output/IOSModularHUD.ipa Payload
+
+      - name: Disponibilizar IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: IOSModularHUD-IPA
+          path: output/IOSModularHUD.ipa
