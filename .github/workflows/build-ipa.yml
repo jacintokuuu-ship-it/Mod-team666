@@ -25,7 +25,7 @@ jobs:
           set -Eeuo pipefail
 
           echo "===== REPOSITORY ====="
-          find . -maxdepth 2 -type f -not -path './.git/*' | sort
+          find . -maxdepth 3 -type f -not -path './.git/*' | sort
 
           echo
           echo "===== SEARCH ZIP ====="
@@ -35,7 +35,7 @@ jobs:
           if [ -f "$SOURCE_ZIP" ]; then
             ZIP="$SOURCE_ZIP"
           else
-            ZIP="$(find . -maxdepth 3 -type f -name "$SOURCE_ZIP" -print -quit)"
+            ZIP="$(find . -maxdepth 4 -type f -name "$SOURCE_ZIP" -print -quit)"
           fi
 
           if [ -z "$ZIP" ]; then
@@ -52,21 +52,20 @@ jobs:
           echo
           echo "===== EXTRAINDO ====="
 
-          unzip -q "$ZIP" \
-            -d "$GITHUB_WORKSPACE/source"
+          unzip -q "$ZIP" -d "$GITHUB_WORKSPACE/source"
 
           echo
           echo "===== CONTEÚDO EXTRAÍDO ====="
 
           find "$GITHUB_WORKSPACE/source" \
-            -maxdepth 4 \
+            -maxdepth 5 \
             -type f \
             | sort
 
           echo
           echo "===== LOCALIZANDO APP ====="
 
-          APP_DIR="$(
+          APP_MAKEFILE="$(
             find "$GITHUB_WORKSPACE/source" \
               -type f \
               -path '*/App/Makefile' \
@@ -74,12 +73,12 @@ jobs:
               -quit
           )"
 
-          if [ -z "$APP_DIR" ]; then
+          if [ -z "$APP_MAKEFILE" ]; then
             echo "::error::App/Makefile não encontrado dentro do ZIP."
             exit 1
           fi
 
-          APP_DIR="$(dirname "$APP_DIR")"
+          APP_DIR="$(dirname "$APP_MAKEFILE")"
 
           PROJECT_ROOT="$(
             cd "$APP_DIR/.." >/dev/null 2>&1
@@ -91,11 +90,12 @@ jobs:
             exit 1
           fi
 
-          echo "App encontrado em:"
+          echo
+          echo "App:"
           echo "$APP_DIR"
 
           echo
-          echo "Projeto encontrado em:"
+          echo "Projeto:"
           echo "$PROJECT_ROOT"
 
           echo "PROJECT_ROOT=$PROJECT_ROOT" >> "$GITHUB_ENV"
@@ -106,9 +106,7 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          sudo xcode-select \
-            --switch \
-            /Applications/Xcode.app/Contents/Developer
+          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 
           echo "===== XCODE ====="
           xcode-select -p
@@ -124,11 +122,16 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          brew install \
-            ldid \
-            xz \
-            make \
-            perl
+          brew install ldid xz make perl || true
+
+          echo
+          echo "===== DEPENDENCIES ====="
+
+          command -v ldid
+          ldid -h >/dev/null 2>&1 || true
+
+          command -v make
+          command -v xz
 
       - name: Install Theos
         shell: bash
@@ -143,10 +146,7 @@ jobs:
             https://github.com/theos/theos.git \
             "$THEOS"
 
-          git -C "$THEOS" \
-            submodule update \
-            --init \
-            --recursive
+          git -C "$THEOS" submodule update --init --recursive
 
           test -f "$THEOS/makefiles/common.mk"
 
@@ -154,6 +154,7 @@ jobs:
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
           echo
+          echo "===== THEOS ====="
           echo "Theos instalado."
 
       - name: Install Theos iPhoneOS 15.6 SDK
@@ -178,9 +179,7 @@ jobs:
             exit 1
           fi
 
-          cp -R \
-            "$SDK" \
-            "$THEOS/sdks/"
+          cp -R "$SDK" "$THEOS/sdks/"
 
           test -d "$THEOS/sdks/iPhoneOS15.6.sdk"
 
@@ -240,26 +239,25 @@ jobs:
           set -Eeuo pipefail
 
           echo "===== MAKEFILE ====="
+
           cat "$PROJECT_ROOT/App/Makefile"
 
           echo
           echo "===== CHECK SETTINGS ====="
 
-          grep -q \
-            'TARGET := iphone:clang:15.6:15.0' \
+          grep -q 'TARGET := iphone:clang:15.6:15.0' \
             "$PROJECT_ROOT/App/Makefile"
 
-          grep -q \
-            'ARCHS := arm64' \
+          grep -q 'ARCHS := arm64' \
             "$PROJECT_ROOT/App/Makefile"
 
-          grep -q \
-            'PACKAGE_FORMAT := ipa' \
+          grep -q 'PACKAGE_FORMAT := ipa' \
             "$PROJECT_ROOT/App/Makefile"
 
+          echo
           echo "Makefile OK."
 
-      - name: Build IPA
+      - name: Build iOS application
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
@@ -270,14 +268,9 @@ jobs:
           echo "======================================"
 
           echo
-          echo "Source:"
-          echo "$PROJECT_ROOT"
-
-          echo
           echo "SDK: 15.6"
           echo "TARGET: iphone:clang:15.6:15.0"
           echo "ARCH: arm64"
-          echo "FORMAT: ipa"
 
           echo
           echo "===== CLEAN ====="
@@ -285,45 +278,69 @@ jobs:
           make clean || true
 
           echo
-          echo "===== BUILD ====="
+          echo "===== COMPILE APPLICATION ====="
 
-          make package \
-            FINALPACKAGE=1 \
-            PACKAGE_FORMAT=ipa \
+          make all \
             TARGET=iphone:clang:15.6:15.0 \
             ARCHS=arm64 \
             SDKVERSION=15.6 \
             messages=yes
 
           echo
-          echo "===== GENERATED PACKAGES ====="
+          echo "===== CHECK APP BUNDLE ====="
 
-          find packages \
-            -maxdepth 1 \
-            -type f \
-            -print
+          APP="$PWD/.theos/obj/iOSModularHUD.app"
 
-          IPA="$(
-            find packages \
-              -maxdepth 1 \
-              -type f \
-              -name '*.ipa' \
-              -print \
-              -quit
-          )"
-
-          if [ -z "$IPA" ]; then
-            echo "::error::Nenhuma IPA foi gerada."
+          if [ ! -d "$APP" ]; then
+            echo "::error::iOSModularHUD.app não foi gerado."
             exit 1
           fi
 
-          mkdir -p "$GITHUB_WORKSPACE/output"
+          if [ ! -f "$APP/iOSModularHUD" ]; then
+            echo "::error::Executável iOSModularHUD não encontrado."
+            exit 1
+          fi
 
-          cp "$IPA" \
-            "$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo "::error::Info.plist não encontrado dentro do .app."
+            exit 1
+          fi
 
           echo
-          echo "IPA criada:"
+          echo "===== APP CONTENT ====="
+
+          find "$APP" \
+            -maxdepth 2 \
+            -type f \
+            | sort
+
+          echo
+          echo "===== CREATE IPA ====="
+
+          rm -rf "$GITHUB_WORKSPACE/output"
+
+          mkdir -p \
+            "$GITHUB_WORKSPACE/output/Payload"
+
+          cp -R \
+            "$APP" \
+            "$GITHUB_WORKSPACE/output/Payload/iOSModularHUD.app"
+
+          cd "$GITHUB_WORKSPACE/output"
+
+          /usr/bin/ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
+            Payload \
+            iOSModularHUD-MAX.ipa
+
+          rm -rf Payload
+
+          echo
+          echo "===== IPA CREATED ====="
+
           ls -lh \
             "$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
 
@@ -334,8 +351,13 @@ jobs:
 
           IPA="$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
 
+          echo "===== FILE ====="
+
           test -s "$IPA"
 
+          ls -lh "$IPA"
+
+          echo
           echo "===== ZIP TEST ====="
 
           unzip -t "$IPA" >/dev/null
@@ -353,7 +375,8 @@ jobs:
           APP_INFO="$(
             unzip -Z1 "$IPA" \
               | grep -E '^Payload/[^/]+\.app/Info\.plist$' \
-              | head -n 1 || true
+              | head -n 1 \
+              || true
           )"
 
           if [ -z "$APP_INFO" ]; then
@@ -363,6 +386,24 @@ jobs:
 
           echo "Encontrado:"
           echo "$APP_INFO"
+
+          echo
+          echo "===== EXECUTABLE CHECK ====="
+
+          APP_EXEC="$(
+            unzip -Z1 "$IPA" \
+              | grep -E '^Payload/[^/]+\.app/iOSModularHUD$' \
+              | head -n 1 \
+              || true
+          )"
+
+          if [ -z "$APP_EXEC" ]; then
+            echo "::error::Executável iOSModularHUD não encontrado dentro da IPA."
+            exit 1
+          fi
+
+          echo "Encontrado:"
+          echo "$APP_EXEC"
 
           echo
           echo "IPA validada com sucesso."
@@ -387,4 +428,4 @@ jobs:
           echo "Arquitetura: arm64"
           echo "SDK: iPhoneOS 15.6"
           echo "Deployment target: iOS 15.0"
-          echo "Alvo: iOS 15.8.8"
+          echo "Build: Theos + Xcode"
