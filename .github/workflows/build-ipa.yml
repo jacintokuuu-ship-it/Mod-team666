@@ -1,52 +1,44 @@
-name: Build iOSModularHUD Rootless
+name: Build iOSModularHUD
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: Build rootless DEB
+    name: Build DEB + IPA + TIPA
     runs-on: macos-15
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify runner
+      - name: Verify Xcode
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "macOS:"
-          sw_vers -productVersion
-
-          echo "Xcode:"
+          sw_vers
           xcodebuild -version
-
-          echo "iOS SDK:"
           xcrun --sdk iphoneos --show-sdk-path
 
-      - name: Install build dependencies
+      - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
-
-          brew update
           brew install dpkg
 
-      - name: Install fresh Theos
+      - name: Install clean Theos
         shell: bash
         run: |
           set -euo pipefail
 
           export THEOS="$HOME/theos"
-
-          # Remove qualquer instalação/cache antigo do Theos.
           rm -rf "$THEOS"
 
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
 
-          # Verificações obrigatórias.
           test -f "$THEOS/makefiles/common.mk"
           test -d "$THEOS/vendor/mod/rootless"
           test -x "$THEOS/bin/ldid"
@@ -54,68 +46,33 @@ jobs:
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
-          echo "Theos instalado:"
-          echo "$THEOS"
-
-      - name: Verify ready source archive
+      - name: Verify source
         shell: bash
         run: |
           set -euo pipefail
 
-          # O projeto NOVO é este arquivo.
-          test -s iOSModularHUD-ready.zip
+          test -f Tweak/Makefile
+          test -f Tweak/control
+          test -f Tweak/Tweak.mm
+          test -f Tweak/iOSModularHUD.plist
 
-          rm -rf build-source
-          mkdir -p build-source
+          test -f App/Makefile
+          test -f App/main.m
+          test -f App/AppDelegate.m
+          test -f App/Resources/Info.plist
 
-          unzip -q iOSModularHUD-ready.zip -d build-source
+          echo "Source OK"
 
-          echo "Conteúdo do projeto:"
-          find build-source -maxdepth 4 -type f | sort
-
-          # Procurar especificamente o projeto Tweak dentro do READY.
-          TWEAK_MAKEFILE=$(
-            find build-source \
-              -type f \
-              -path '*/Tweak/Makefile' \
-              -print \
-              -quit
-          )
-
-          if [ -z "$TWEAK_MAKEFILE" ]; then
-            echo "::error::iOSModularHUD-ready.zip não contém Tweak/Makefile."
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$(dirname "$TWEAK_MAKEFILE")")
-
-          echo "Projeto encontrado:"
-          echo "$PROJECT_DIR"
-
-          # Arquivos obrigatórios do novo projeto.
-          test -f "$PROJECT_DIR/Tweak/Makefile"
-          test -f "$PROJECT_DIR/Tweak/control"
-          test -f "$PROJECT_DIR/Tweak/Tweak.mm"
-          test -f "$PROJECT_DIR/Tweak/iOSModularHUD.plist"
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+      # =========================
+      # JAILBREAK ROOTLESS
+      # =========================
 
       - name: Build rootless DEB
+        working-directory: Tweak
         shell: bash
         run: |
           set -euo pipefail
 
-          cd "$PROJECT_DIR/Tweak"
-
-          echo "Construindo:"
-          pwd
-
-          echo "Makefile:"
-          cat Makefile
-
-          # IMPORTANTE:
-          # rootless é THEOS_PACKAGE_SCHEME.
-          # deb é PACKAGE_FORMAT.
           make clean
 
           env \
@@ -123,64 +80,96 @@ jobs:
             PACKAGE_FORMAT=deb \
             make package FINALPACKAGE=1 messages=yes
 
-          DEB=$(
-            find packages \
-              -maxdepth 1 \
-              -type f \
-              -name '*.deb' \
-              -print \
-              -quit
-          )
+          DEB="$(find packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
 
-          if [ -z "$DEB" ]; then
-            echo "::error::Theos terminou sem gerar o arquivo .deb."
-            exit 1
-          fi
-
-          echo "DEB gerado:"
-          echo "$DEB"
+          test -n "$DEB"
 
           mkdir -p "$GITHUB_WORKSPACE/output"
 
-          cp \
-            "$DEB" \
+          cp "$DEB" \
             "$GITHUB_WORKSPACE/output/iOSModularHUD-rootless.deb"
 
-      - name: Validate rootless package
+      - name: Validate DEB
         shell: bash
         run: |
           set -euo pipefail
 
-          PKG="$GITHUB_WORKSPACE/output/iOSModularHUD-rootless.deb"
+          PKG="output/iOSModularHUD-rootless.deb"
 
           test -s "$PKG"
 
-          echo "=== Informações do pacote ==="
           dpkg-deb -I "$PKG"
+          dpkg-deb -c "$PKG" | tee deb-contents.txt
 
-          echo "=== Conteúdo do pacote ==="
-          dpkg-deb -c "$PKG" | tee package-contents.txt
+          grep -q 'var/jb/' deb-contents.txt
+          grep -q 'Library/MobileSubstrate/DynamicLibraries' deb-contents.txt
 
-          # Rootless precisa instalar em /var/jb.
-          if ! grep -q 'var/jb/' package-contents.txt; then
-            echo "::error::O .deb não contém o prefixo rootless /var/jb/."
-            exit 1
-          fi
+      # =========================
+      # TROLLSTORE APP
+      # =========================
 
-          # Verifica o layout esperado de um tweak.
-          if ! grep -q 'Library/MobileSubstrate/DynamicLibraries' package-contents.txt; then
-            echo "::error::O .deb não contém o layout esperado de tweak."
-            exit 1
-          fi
+      - name: Build standalone IPA
+        working-directory: App
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          echo "================================"
-          echo "ROOTLESS DEB VALIDADO COM SUCESSO"
-          echo "================================"
+          make clean
 
-      - name: Upload artifact
+          env \
+            PACKAGE_FORMAT=ipa \
+            make package FINALPACKAGE=1 messages=yes
+
+          IPA="$(find packages -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+
+          test -n "$IPA"
+
+          mkdir -p "$GITHUB_WORKSPACE/output"
+
+          cp "$IPA" \
+            "$GITHUB_WORKSPACE/output/iOSModularHUD.ipa"
+
+      - name: Create TIPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -s output/iOSModularHUD.ipa
+
+          cp \
+            output/iOSModularHUD.ipa \
+            output/iOSModularHUD.tipa
+
+      - name: Validate IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for FILE in \
+            output/iOSModularHUD.ipa \
+            output/iOSModularHUD.tipa
+          do
+            test -s "$FILE"
+
+            unzip -t "$FILE" >/dev/null
+
+            unzip -l "$FILE" |
+              grep -E 'Payload/[^/]+\.app/Info.plist$'
+
+            echo "Validado: $FILE"
+          done
+
+      # =========================
+      # ARTIFACTS
+      # =========================
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: iOSModularHUD-rootless
-          path: output/iOSModularHUD-rootless.deb
+          name: iOSModularHUD-builds
+          path: |
+            output/iOSModularHUD-rootless.deb
+            output/iOSModularHUD.ipa
+            output/iOSModularHUD.tipa
           if-no-files-found: error
           retention-days: 14
