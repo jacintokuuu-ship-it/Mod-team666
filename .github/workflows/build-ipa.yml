@@ -15,42 +15,19 @@ jobs:
       - name: Instalar dependências
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            bash \
-            curl \
-            git \
-            make \
-            perl \
-            xz-utils \
-            unzip \
-            fakeroot
+          sudo apt-get install -y bash curl git make perl xz-utils unzip fakeroot
 
       - name: Instalar Theos
         run: |
           export THEOS="$HOME/theos"
-
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
-
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
-
-      - name: Localizar source
-        run: |
-          echo "Conteúdo do repositório:"
-          find . -maxdepth 3 -type f | sort
-
-          echo
-          echo "Conteúdo do ZIP:"
-          unzip -l iOSModularHUD.zip
 
       - name: Extrair source
         run: |
           rm -rf build-source
           mkdir -p build-source
-
           unzip -q iOSModularHUD.zip -d build-source
-
-          echo "Source extraída:"
-          find build-source -maxdepth 4 -type f | sort
 
       - name: Localizar projeto Theos
         run: |
@@ -62,62 +39,25 @@ jobs:
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT_DIR")
-
-          echo "Projeto encontrado em:"
-          echo "$PROJECT_DIR"
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Verificar projeto
-        run: |
-          cd "$PROJECT_DIR"
-
-          echo "===== Makefile ====="
-          cat Makefile
-
-          echo
-          echo "===== control ====="
-          cat control
-
-          echo
-          echo "===== arquivos ====="
-          find . -maxdepth 4 -type f | sort
 
       - name: Compilar pacote rootless
         run: |
           cd "$PROJECT_DIR"
-
-          export THEOS="$HOME/theos"
-
           make clean
-          make package \
-            FINALPACKAGE=1 \
-            THEOS_PACKAGE_SCHEME=rootless \
-            PACKAGE_FORMAT=deb
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless PACKAGE_FORMAT=deb
 
-      - name: Procurar pacote gerado
+      - name: Copiar pacote
         run: |
-          echo "Pacotes encontrados:"
+          mkdir -p output
+          DEB=$(find "$PROJECT_DIR" -type f -name "*.deb" -print -quit)
 
-          find "$PROJECT_DIR" -type f \
-            \( -name "*.deb" -o -name "*.ipa" \) \
-            -print
-
-          if ! find "$PROJECT_DIR" -type f -name "*.deb" | grep -q .; then
+          if [ -z "$DEB" ]; then
             echo "::error::Nenhum arquivo .deb foi gerado."
             exit 1
           fi
 
-      - name: Copiar pacote para output
-        run: |
-          mkdir -p output
-
-          DEB=$(find "$PROJECT_DIR" -type f -name "*.deb" -print -quit)
-
           cp "$DEB" output/iOSModularHUD-rootless.deb
-
-          echo "Pacote final:"
-          ls -lh output/
 
       - name: Disponibilizar pacote
         uses: actions/upload-artifact@v4
@@ -125,114 +65,3 @@ jobs:
           name: iOSModularHUD-rootless
           path: output/iOSModularHUD-rootless.deb
           if-no-files-found: error
-
-Depois:
-
-1. Toque em **Commit changes**.
-2. Entre em **Actions**.
-3. Selecione **Build iOSModularHUD**.
-4. Toque em **Run workflow**.
-5. Execute.
-6. Aguarde o término.
-
-O ponto importante é que agora o workflow **não procura `.app`**.
-
-Ele faz:
-
-```text
-iOSModularHUD.zip
-        ↓
-extrair
-        ↓
-encontrar Makefile
-        ↓
-instalar Theos
-        ↓
-compilar Objective-C/Objective-C++
-        ↓
-Theos stage
-        ↓
-pacote Debian rootless
-        ↓
-iOSModularHUD-rootless.deb
-
-O Theos oficialmente suporta Linux como ambiente de build para iOS, e a instalação oficial fornece o instalador "install-theos".
-
-2. Um detalhe que eu já corrigi no workflow
-
-Seu "Makefile" original contém:
-
-PACKAGE_FORMAT = rootless
-
-Isso não é a forma correta de selecionar o scheme rootless.
-
-O Theos documenta:
-
-THEOS_PACKAGE_SCHEME=rootless
-
-e separadamente:
-
-PACKAGE_FORMAT=deb
-
-Por isso o workflow passa explicitamente:
-
-THEOS_PACKAGE_SCHEME=rootless
-PACKAGE_FORMAT=deb
-
-Isso evita depender de uma configuração ambígua do projeto.
-
-3. O que vamos esperar no primeiro resultado
-
-Se tudo estiver certo, no final do GitHub Actions aparecerá um Artifact chamado:
-
-iOSModularHUD-rootless
-
-Dentro dele:
-
-iOSModularHUD-rootless.deb
-
-Esse é o arquivo que você poderá usar em um ambiente de jailbreak compatível com o pacote rootless.
-
-Não precisa existir ".app" para esse projeto. O produto final de um tweak Theos é o pacote Debian que instala o tweak e sua estrutura no sistema. O Theos explica que o "make package" compila, faz o staging e constrói o pacote em "packages/".
-
-4. E sobre IPA/TIPA?
-
-Aqui é importante não misturarmos duas coisas.
-
-Seu projeto atual é:
-
-Tweak.xm
-     ↓
-.dylib
-     ↓
-package rootless
-     ↓
-.deb
-
-Não:
-
-main.swift / AppDelegate
-     ↓
-.app
-     ↓
-IPA
-
-O Theos suporta ".ipa" como formato de pacote em determinados tipos de projeto, mas isso não transforma automaticamente um tweak em aplicativo independente.
-
-Então, para esse ZIP específico, o arquivo correto e realmente instalável como tweak é:
-
-"iOSModularHUD-rootless.deb"
-
-E isso é justamente o que queremos se a intenção é preservar a arquitetura para jailbreak.
-
-Agora faça só essa etapa
-
-Não altere nenhum dos arquivos da source ainda.
-
-Troque apenas:
-
-.github/workflows/build-ipa.yml
-
-pelo workflow acima e rode o Actions.
-
-Se ele falhar, mande aqui o erro vermelho completo do Actions (pode mandar print). A partir desse erro eu ajusto o workflow ou o "Makefile" especificamente para o problema encontrado, em vez de ficarmos tentando métodos aleatórios.
