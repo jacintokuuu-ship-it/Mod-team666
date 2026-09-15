@@ -1,4 +1,4 @@
-name: Build iOSModularHUD MAX IPA
+name: Build MAKTERzin IPA
 
 on:
   workflow_dispatch:
@@ -8,14 +8,14 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: iOSModularHUD-max-ipa-fixed.zip
+  SOURCE_ZIP: MAKTERzin-ready-to-build(1).zip
   SDK_VERSION: "15.6"
   IOS_DEPLOYMENT: "15.0"
   TARGET: "iphone:clang:15.6:15.0"
 
 jobs:
   build:
-    name: Build MAX IPA
+    name: Build MAKTERzin
     runs-on: macos-15
 
     steps:
@@ -29,16 +29,16 @@ jobs:
 
 
       # ============================================================
-      # LOCATE + EXTRACT SOURCE ZIP
+      # LOCALIZAR + EXTRAIR ZIP
       # ============================================================
 
-      - name: Locate and extract source
+      - name: Locate and extract MAKTERzin ZIP
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " LOCATING SOURCE ZIP"
+          echo " LOCALIZANDO ZIP DO MAKTERzin"
           echo "======================================"
 
           ZIP=""
@@ -57,7 +57,7 @@ jobs:
           fi
 
           if [ -z "$ZIP" ]; then
-            echo "::error::Source ZIP não encontrado: $SOURCE_ZIP"
+            echo "::error::ZIP não encontrado: $SOURCE_ZIP"
             echo
             echo "Arquivos encontrados:"
             find "$GITHUB_WORKSPACE" \
@@ -68,19 +68,21 @@ jobs:
             exit 1
           fi
 
-          echo "ZIP:"
+          echo "ZIP encontrado:"
           echo "$ZIP"
 
           rm -rf "$GITHUB_WORKSPACE/source"
           mkdir -p "$GITHUB_WORKSPACE/source"
 
           echo
-          echo "Extraindo..."
+          echo "Extraindo ZIP..."
 
           unzip -q "$ZIP" -d "$GITHUB_WORKSPACE/source"
 
+          echo "ZIP extraído."
+
           echo
-          echo "Source extraída."
+          echo "Procurando App/Makefile..."
 
           APP_MAKEFILE="$(
             find "$GITHUB_WORKSPACE/source" \
@@ -91,9 +93,10 @@ jobs:
           )"
 
           if [ -z "$APP_MAKEFILE" ]; then
-            echo "::error::App/Makefile não encontrado."
+            echo "::error::App/Makefile não encontrado dentro do ZIP."
+            echo
             find "$GITHUB_WORKSPACE/source" \
-              -maxdepth 6 \
+              -maxdepth 7 \
               -type f \
               | sort
             exit 1
@@ -105,11 +108,6 @@ jobs:
             cd "$APP_DIR/.." >/dev/null
             pwd
           )"
-
-          if [ ! -d "$PROJECT_ROOT/Shared" ]; then
-            echo "::error::Shared/ não encontrado."
-            exit 1
-          fi
 
           echo
           echo "PROJECT_ROOT:"
@@ -153,7 +151,7 @@ jobs:
 
 
       # ============================================================
-      # DEPENDENCIES
+      # DEPENDÊNCIAS
       # ============================================================
 
       - name: Install build dependencies
@@ -162,7 +160,7 @@ jobs:
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " DEPENDENCIES"
+          echo " DEPENDÊNCIAS"
           echo "======================================"
 
           brew install ldid xz perl || true
@@ -223,7 +221,7 @@ jobs:
 
 
       # ============================================================
-      # THEOS SDK
+      # THEOS SDK 15.6
       # ============================================================
 
       - name: Install Theos iPhoneOS 15.6 SDK
@@ -265,16 +263,16 @@ jobs:
 
 
       # ============================================================
-      # VALIDATE SOURCE
+      # VALIDAR PROJETO
       # ============================================================
 
-      - name: Validate source
+      - name: Validate MAKTERzin source
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " SOURCE VALIDATION"
+          echo " VALIDANDO MAKTERzin"
           echo "======================================"
 
           required=(
@@ -283,27 +281,41 @@ jobs:
             "$PROJECT_ROOT/App/AppDelegate.h"
             "$PROJECT_ROOT/App/AppDelegate.m"
             "$PROJECT_ROOT/App/Resources/Info.plist"
+
+            "$PROJECT_ROOT/App/Core/Backend.h"
+            "$PROJECT_ROOT/App/Core/Backend.mm"
             "$PROJECT_ROOT/App/Core/FeatureManager.h"
             "$PROJECT_ROOT/App/Core/FeatureManager.mm"
+
             "$PROJECT_ROOT/App/Menu/Menu.h"
             "$PROJECT_ROOT/App/Menu/Menu.mm"
+
             "$PROJECT_ROOT/App/Overlay/Overlay.h"
             "$PROJECT_ROOT/App/Overlay/Overlay.mm"
+
             "$PROJECT_ROOT/Shared/HUDCapabilities.h"
             "$PROJECT_ROOT/Shared/HUDCapabilities.mm"
+            "$PROJECT_ROOT/Shared/HUDStyle.h"
+            "$PROJECT_ROOT/Shared/HUDStyle.mm"
+
+            "$PROJECT_ROOT/App/Resources/Assets.xcassets/fogo.imageset/fogo.png"
           )
 
           for file in "${required[@]}"; do
+
             if [ ! -f "$file" ]; then
-              echo "::error::Arquivo ausente: $file"
+              echo "::error::Arquivo ausente:"
+              echo "$file"
               exit 1
             fi
 
             echo "OK: $file"
+
           done
 
           echo
-          echo "Info.plist:"
+          echo "Validando Info.plist..."
+
           plutil -lint \
             "$PROJECT_ROOT/App/Resources/Info.plist"
 
@@ -312,7 +324,7 @@ jobs:
 
 
       # ============================================================
-      # MAKEFILE VALIDATION
+      # VALIDAR MAKEFILE
       # ============================================================
 
       - name: Validate Makefile
@@ -355,17 +367,17 @@ jobs:
 
 
       # ============================================================
-      # BUILD
+      # COMPILAR
       # ============================================================
 
-      - name: Compile application
+      - name: Compile MAKTERzin
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " BUILD iOSModularHUD"
+          echo " BUILD MAKTERzin"
           echo "======================================"
 
           echo
@@ -386,7 +398,7 @@ jobs:
           make clean || true
 
           echo
-          echo "Compiling..."
+          echo "Compilando..."
 
           make all \
             TARGET="$TARGET" \
@@ -395,51 +407,52 @@ jobs:
             messages=yes
 
           echo
-          echo "Compilation command finished."
+          echo "Compilação concluída."
 
 
       # ============================================================
-      # FIND GENERATED APP
+      # ENCONTRAR APP
       # ============================================================
 
-      - name: Locate generated app
+      - name: Locate generated MAKTERzin.app
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " LOCATING GENERATED APP"
+          echo " LOCALIZANDO APP"
           echo "======================================"
 
           APP="$(
             find "$PWD/.theos/obj" \
               -type d \
-              -name 'iOSModularHUD.app' \
+              -name 'MAKTERzin.app' \
               -print \
               | head -n 1
           )"
 
           if [ -z "$APP" ]; then
-            echo "::error::iOSModularHUD.app não foi encontrado."
+            echo "::error::MAKTERzin.app não foi encontrado."
 
             echo
             echo "===== .THEOS/OBJ ====="
 
             find "$PWD/.theos/obj" \
-              -maxdepth 7 \
+              -maxdepth 8 \
               -print \
               | sort
 
             exit 1
           fi
 
+          echo
           echo "APP encontrado:"
           echo "$APP"
 
-          if [ ! -f "$APP/iOSModularHUD" ]; then
-            echo "::error::Executável não encontrado:"
-            echo "$APP/iOSModularHUD"
+          if [ ! -f "$APP/MAKTERzin" ]; then
+            echo "::error::Executável MAKTERzin não encontrado:"
+            echo "$APP/MAKTERzin"
             exit 1
           fi
 
@@ -457,10 +470,10 @@ jobs:
 
 
       # ============================================================
-      # IPA
+      # CRIAR IPA
       # ============================================================
 
-      - name: Create IPA
+      - name: Create MAKTERzin IPA
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -482,10 +495,10 @@ jobs:
 
           cp -R \
             "$APP_PATH" \
-            "$GITHUB_WORKSPACE/output/Payload/iOSModularHUD.app"
+            "$GITHUB_WORKSPACE/output/Payload/MAKTERzin.app"
 
           if [ ! -f \
-            "$GITHUB_WORKSPACE/output/Payload/iOSModularHUD.app/iOSModularHUD"
+            "$GITHUB_WORKSPACE/output/Payload/MAKTERzin.app/MAKTERzin"
           ]; then
             echo "::error::Falha ao copiar o .app para Payload."
             exit 1
@@ -499,9 +512,9 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             Payload \
-            iOSModularHUD-MAX.ipa
+            MAKTERzin.ipa
 
-          if [ ! -s iOSModularHUD-MAX.ipa ]; then
+          if [ ! -s MAKTERzin.ipa ]; then
             echo "::error::IPA não foi criada."
             exit 1
           fi
@@ -511,31 +524,31 @@ jobs:
           echo
           echo "IPA criada:"
           ls -lh \
-            "$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
+            "$GITHUB_WORKSPACE/output/MAKTERzin.ipa"
 
 
       # ============================================================
-      # VALIDATE IPA
+      # VALIDAR IPA
       # ============================================================
 
-      - name: Validate IPA
+      - name: Validate MAKTERzin IPA
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " VALIDATE IPA"
+          echo " VALIDANDO IPA"
           echo "======================================"
 
-          IPA="$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
+          IPA="$GITHUB_WORKSPACE/output/MAKTERzin.ipa"
 
           if [ ! -f "$IPA" ]; then
-            echo "::error::IPA não encontrada."
+            echo "::error::MAKTERzin.ipa não encontrada."
             exit 1
           fi
 
           echo
-          echo "Testing ZIP..."
+          echo "Testando ZIP..."
 
           unzip -t "$IPA" >/dev/null
 
@@ -564,13 +577,13 @@ jobs:
 
           APP_EXEC="$(
             unzip -Z1 "$IPA" \
-              | grep -E '^Payload/[^/]+\.app/iOSModularHUD$' \
+              | grep -E '^Payload/[^/]+\.app/MAKTERzin$' \
               | head -n 1 \
               || true
           )"
 
           if [ -z "$APP_EXEC" ]; then
-            echo "::error::Executável não encontrado dentro da IPA."
+            echo "::error::Executável MAKTERzin não encontrado dentro da IPA."
             exit 1
           fi
 
@@ -607,14 +620,14 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: iOSModularHUD-MAX-IPA-iOS15
-          path: output/iOSModularHUD-MAX.ipa
+          name: MAKTERzin-IPA-iOS15
+          path: output/MAKTERzin.ipa
           if-no-files-found: error
           retention-days: 14
 
 
       # ============================================================
-      # FINAL
+      # RESULTADO
       # ============================================================
 
       - name: Build result
@@ -622,29 +635,36 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          IPA="$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
+          IPA="$GITHUB_WORKSPACE/output/MAKTERzin.ipa"
 
           echo
           echo "======================================"
-          echo "       BUILD CONCLUIDO"
+          echo "       BUILD CONCLUÍDO"
           echo "======================================"
+
           echo
           echo "Arquivo:"
-          echo "iOSModularHUD-MAX.ipa"
+          echo "MAKTERzin.ipa"
+
           echo
           echo "Formato:"
           echo "IPA"
+
           echo
           echo "Arquitetura:"
           echo "arm64"
+
           echo
           echo "SDK:"
           echo "iPhoneOS 15.6"
+
           echo
           echo "Deployment:"
           echo "iOS 15.0"
+
           echo
           echo "Tamanho:"
           ls -lh "$IPA"
+
           echo
           echo "======================================"
