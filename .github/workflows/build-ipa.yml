@@ -1,67 +1,186 @@
-name: Build iOSModularHUD
+name: Build iOSModularHUD Rootless
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Theos Rootless Package
-    runs-on: ubuntu-latest
+    name: Build rootless DEB
+    runs-on: macos-15
 
     steps:
-      - name: Baixar repositório
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Instalar dependências
+      - name: Verify runner
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bash curl git make perl xz-utils unzip fakeroot
+          set -euo pipefail
 
-      - name: Instalar Theos
+          echo "macOS:"
+          sw_vers -productVersion
+
+          echo "Xcode:"
+          xcodebuild -version
+
+          echo "iOS SDK:"
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: Install build dependencies
+        shell: bash
         run: |
+          set -euo pipefail
+
+          brew update
+          brew install dpkg
+
+      - name: Install fresh Theos
+        shell: bash
+        run: |
+          set -euo pipefail
+
           export THEOS="$HOME/theos"
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
-          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
 
-      - name: Extrair source
+          # Remove qualquer instalação/cache antigo do Theos.
+          rm -rf "$THEOS"
+
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+
+          # Verificações obrigatórias.
+          test -f "$THEOS/makefiles/common.mk"
+          test -d "$THEOS/vendor/mod/rootless"
+          test -x "$THEOS/bin/ldid"
+
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+
+          echo "Theos instalado:"
+          echo "$THEOS"
+
+      - name: Verify ready source archive
+        shell: bash
         run: |
+          set -euo pipefail
+
+          # O projeto NOVO é este arquivo.
+          test -s iOSModularHUD-ready.zip
+
           rm -rf build-source
           mkdir -p build-source
-          unzip -q iOSModularHUD.zip -d build-source
 
-      - name: Localizar projeto Theos
-        run: |
-          PROJECT_DIR=$(find build-source -name Makefile -type f -print -quit)
+          unzip -q iOSModularHUD-ready.zip -d build-source
 
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::Nenhum Makefile do Theos foi encontrado."
+          echo "Conteúdo do projeto:"
+          find build-source -maxdepth 4 -type f | sort
+
+          # Procurar especificamente o projeto Tweak dentro do READY.
+          TWEAK_MAKEFILE=$(
+            find build-source \
+              -type f \
+              -path '*/Tweak/Makefile' \
+              -print \
+              -quit
+          )
+
+          if [ -z "$TWEAK_MAKEFILE" ]; then
+            echo "::error::iOSModularHUD-ready.zip não contém Tweak/Makefile."
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$PROJECT_DIR")
+          PROJECT_DIR=$(dirname "$(dirname "$TWEAK_MAKEFILE")")
+
+          echo "Projeto encontrado:"
+          echo "$PROJECT_DIR"
+
+          # Arquivos obrigatórios do novo projeto.
+          test -f "$PROJECT_DIR/Tweak/Makefile"
+          test -f "$PROJECT_DIR/Tweak/control"
+          test -f "$PROJECT_DIR/Tweak/Tweak.mm"
+          test -f "$PROJECT_DIR/Tweak/iOSModularHUD.plist"
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Compilar pacote rootless
+      - name: Build rootless DEB
+        shell: bash
         run: |
-          cd "$PROJECT_DIR"
-          make clean
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless PACKAGE_FORMAT=deb
+          set -euo pipefail
 
-      - name: Copiar pacote
-        run: |
-          mkdir -p output
-          DEB=$(find "$PROJECT_DIR" -type f -name "*.deb" -print -quit)
+          cd "$PROJECT_DIR/Tweak"
+
+          echo "Construindo:"
+          pwd
+
+          echo "Makefile:"
+          cat Makefile
+
+          # IMPORTANTE:
+          # rootless é THEOS_PACKAGE_SCHEME.
+          # deb é PACKAGE_FORMAT.
+          make clean
+
+          env \
+            THEOS_PACKAGE_SCHEME=rootless \
+            PACKAGE_FORMAT=deb \
+            make package FINALPACKAGE=1 messages=yes
+
+          DEB=$(
+            find packages \
+              -maxdepth 1 \
+              -type f \
+              -name '*.deb' \
+              -print \
+              -quit
+          )
 
           if [ -z "$DEB" ]; then
-            echo "::error::Nenhum arquivo .deb foi gerado."
+            echo "::error::Theos terminou sem gerar o arquivo .deb."
             exit 1
           fi
 
-          cp "$DEB" output/iOSModularHUD-rootless.deb
+          echo "DEB gerado:"
+          echo "$DEB"
 
-      - name: Disponibilizar pacote
+          mkdir -p "$GITHUB_WORKSPACE/output"
+
+          cp \
+            "$DEB" \
+            "$GITHUB_WORKSPACE/output/iOSModularHUD-rootless.deb"
+
+      - name: Validate rootless package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PKG="$GITHUB_WORKSPACE/output/iOSModularHUD-rootless.deb"
+
+          test -s "$PKG"
+
+          echo "=== Informações do pacote ==="
+          dpkg-deb -I "$PKG"
+
+          echo "=== Conteúdo do pacote ==="
+          dpkg-deb -c "$PKG" | tee package-contents.txt
+
+          # Rootless precisa instalar em /var/jb.
+          if ! grep -q 'var/jb/' package-contents.txt; then
+            echo "::error::O .deb não contém o prefixo rootless /var/jb/."
+            exit 1
+          fi
+
+          # Verifica o layout esperado de um tweak.
+          if ! grep -q 'Library/MobileSubstrate/DynamicLibraries' package-contents.txt; then
+            echo "::error::O .deb não contém o layout esperado de tweak."
+            exit 1
+          fi
+
+          echo "================================"
+          echo "ROOTLESS DEB VALIDADO COM SUCESSO"
+          echo "================================"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: iOSModularHUD-rootless
           path: output/iOSModularHUD-rootless.deb
           if-no-files-found: error
+          retention-days: 14
