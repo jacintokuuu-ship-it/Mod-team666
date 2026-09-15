@@ -1,4 +1,4 @@
-name: Build iOSModularHUD IPA
+name: Build iOSModularHUD MAX IPA
 
 on:
   workflow_dispatch:
@@ -11,21 +11,12 @@ env:
 
 jobs:
   build:
-    name: Build IPA for iOS 15
+    name: Build MAX IPA - iOS 15
     runs-on: macos-15
 
     steps:
-
-      # ------------------------------------------------------------
-      # SOURCE
-      # ------------------------------------------------------------
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # ------------------------------------------------------------
-      # XCODE
-      # ------------------------------------------------------------
+      - name: Checkout source
+        uses: actions/checkout@v5
 
       - name: Configure Xcode
         shell: bash
@@ -36,26 +27,16 @@ jobs:
             --switch \
             /Applications/Xcode.app/Contents/Developer
 
-          echo "Developer:"
+          echo "===== XCODE ====="
           xcode-select -p
-
-          echo
-          echo "Xcode:"
           xcodebuild -version
 
           echo
-          echo "iPhoneOS SDK:"
+          echo "===== APPLE SDK ====="
           xcrun --sdk iphoneos --show-sdk-path
-
-          echo
-          echo "SDK version:"
           xcrun --sdk iphoneos --show-sdk-version
 
-      # ------------------------------------------------------------
-      # DEPENDENCIES
-      # ------------------------------------------------------------
-
-      - name: Install dependencies
+      - name: Install build dependencies
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -66,11 +47,7 @@ jobs:
             make \
             perl
 
-      # ------------------------------------------------------------
-      # THEOS
-      # ------------------------------------------------------------
-
-      - name: Clone Theos
+      - name: Install Theos
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -90,17 +67,12 @@ jobs:
 
           test -f "$THEOS/makefiles/common.mk"
 
-          echo "Theos:"
-          git -C "$THEOS" rev-parse --short HEAD
-
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
-      # ------------------------------------------------------------
-      # PATCHED SDK
-      # ------------------------------------------------------------
+          echo "Theos instalado."
 
-      - name: Install Theos iOS SDK
+      - name: Install Theos iPhoneOS 15.6 SDK
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -108,87 +80,118 @@ jobs:
           mkdir -p "$THEOS/sdks"
 
           rm -rf "$THEOS/sdks/"*
-
-          echo "Downloading official Theos SDK repository..."
+          rm -rf "$GITHUB_WORKSPACE/theos-sdks"
 
           git clone \
             --depth 1 \
             https://github.com/theos/sdks.git \
             "$GITHUB_WORKSPACE/theos-sdks"
 
-          test -d \
-            "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk"
+          if [ ! -d "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" ]; then
+            echo "::error::iPhoneOS15.6.sdk não encontrado."
+            exit 1
+          fi
 
           cp -R \
             "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" \
             "$THEOS/sdks/"
 
-          test -d \
-            "$THEOS/sdks/iPhoneOS15.6.sdk"
+          test -d "$THEOS/sdks/iPhoneOS15.6.sdk"
 
           echo
-          echo "Installed Theos SDK:"
+          echo "SDK instalado:"
           ls -ld "$THEOS/sdks/iPhoneOS15.6.sdk"
 
-      # ------------------------------------------------------------
-      # SOURCE VALIDATION
-      # ------------------------------------------------------------
-
-      - name: Validate App source
+      - name: Validate MAX source
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          test -f App/Makefile
-          test -f App/main.m
-          test -f App/AppDelegate.h
-          test -f App/AppDelegate.m
-          test -f App/Resources/Info.plist
-
-          test -f App/Core/FeatureManager.h
-          test -f App/Core/FeatureManager.mm
-
-          test -f App/Menu/Menu.h
-          test -f App/Menu/Menu.mm
-
-          test -f App/Overlay/Overlay.h
-          test -f App/Overlay/Overlay.mm
+          echo "===== SOURCE ====="
+          find App Shared \
+            -maxdepth 3 \
+            -type f \
+            | sort
 
           echo
-          echo "===== APP MAKEFILE ====="
-          cat App/Makefile
+          echo "===== REQUIRED FILES ====="
+
+          required=(
+            "App/Makefile"
+            "App/main.m"
+            "App/AppDelegate.h"
+            "App/AppDelegate.m"
+            "App/Resources/Info.plist"
+            "App/Core/FeatureManager.h"
+            "App/Core/FeatureManager.mm"
+            "App/Menu/Menu.h"
+            "App/Menu/Menu.mm"
+            "App/Overlay/Overlay.h"
+            "App/Overlay/Overlay.mm"
+            "Shared/HUDCapabilities.h"
+            "Shared/HUDCapabilities.mm"
+          )
+
+          for file in "${required[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Arquivo ausente: $file"
+              exit 1
+            fi
+
+            echo "OK: $file"
+          done
 
           echo
           echo "===== INFO.PLIST ====="
-          cat App/Resources/Info.plist
 
-      # ------------------------------------------------------------
-      # BUILD IPA
-      # ------------------------------------------------------------
+          plutil -lint App/Resources/Info.plist
 
-      - name: Build IPA
-        working-directory: App
+      - name: Check Makefile
         shell: bash
-        env:
-          TARGET: iphone:clang:15.6:15.0
-          ARCHS: arm64
-          PACKAGE_FORMAT: ipa
-          FINALPACKAGE: "1"
-          SDKVERSION: "15.6"
         run: |
           set -Eeuo pipefail
 
-          echo "========================================"
-          echo "        iOSModularHUD IPA BUILD"
-          echo "========================================"
-          echo
-          echo "TARGET=$TARGET"
-          echo "ARCHS=$ARCHS"
-          echo "SDKVERSION=$SDKVERSION"
-          echo "PACKAGE_FORMAT=$PACKAGE_FORMAT"
-          echo
+          echo "===== APP MAKEFILE ====="
+          cat App/Makefile
 
-          make clean
+          grep -q \
+            'TARGET := iphone:clang:15.6:15.0' \
+            App/Makefile
+
+          grep -q \
+            'ARCHS := arm64' \
+            App/Makefile
+
+          grep -q \
+            'PACKAGE_FORMAT := ipa' \
+            App/Makefile
+
+          echo
+          echo "Makefile OK."
+
+      - name: Build MAX IPA
+        working-directory: App
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo "       iOSModularHUD MAX IPA"
+          echo "======================================"
+
+          echo
+          echo "SDK: 15.6"
+          echo "TARGET: iphone:clang:15.6:15.0"
+          echo "ARCH: arm64"
+          echo "FORMAT: ipa"
+
+          echo
+          echo "===== CLEAN ====="
+
+          make clean || true
+
+          echo
+          echo "===== BUILD ====="
 
           make package \
             FINALPACKAGE=1 \
@@ -199,7 +202,7 @@ jobs:
             messages=yes
 
           echo
-          echo "===== GENERATED PACKAGES ====="
+          echo "===== GENERATED FILES ====="
 
           find packages \
             -maxdepth 1 \
@@ -216,27 +219,30 @@ jobs:
           )"
 
           if [ -z "$IPA" ]; then
-            echo "::error::Theos não gerou uma IPA."
+            echo "::error::Nenhuma IPA foi gerada."
             exit 1
           fi
 
           mkdir -p "$GITHUB_WORKSPACE/output"
 
           cp "$IPA" \
-            "$GITHUB_WORKSPACE/output/iOSModularHUD.ipa"
+            "$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
 
-      # ------------------------------------------------------------
-      # IPA VALIDATION
-      # ------------------------------------------------------------
+          echo
+          echo "IPA criada:"
+          ls -lh "$GITHUB_WORKSPACE/output/iOSModularHUD-MAX.ipa"
 
       - name: Validate IPA
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          IPA="output/iOSModularHUD.ipa"
+          IPA="output/iOSModularHUD-MAX.ipa"
 
-          test -s "$IPA"
+          if [ ! -s "$IPA" ]; then
+            echo "::error::IPA vazia ou inexistente."
+            exit 1
+          fi
 
           echo "===== ZIP TEST ====="
 
@@ -250,47 +256,43 @@ jobs:
           unzip -l "$IPA"
 
           echo
-          echo "===== APP CHECK ====="
+          echo "===== PAYLOAD CHECK ====="
 
-          unzip -l "$IPA" \
-            | grep -E \
-              'Payload/[^/]+\.app/Info.plist$'
+          APP_INFO="$(
+            unzip -Z1 "$IPA" \
+              | grep -E '^Payload/[^/]+\.app/Info\.plist$' \
+              | head -n 1 || true
+          )"
+
+          if [ -z "$APP_INFO" ]; then
+            echo "::error::Payload/*.app/Info.plist não encontrado."
+            exit 1
+          fi
+
+          echo "Encontrado:"
+          echo "$APP_INFO"
 
           echo
-          echo "IPA structure OK."
+          echo "IPA validada com sucesso."
 
-      # ------------------------------------------------------------
-      # FINAL INFO
-      # ------------------------------------------------------------
+      - name: Upload MAX IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOSModularHUD-MAX-IPA-iOS15
+          path: output/iOSModularHUD-MAX.ipa
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Final result
+      - name: Final information
         shell: bash
         run: |
-          set -Eeuo pipefail
-
-          echo
-          echo "========================================"
+          echo "======================================"
           echo "          BUILD CONCLUÍDO"
-          echo "========================================"
+          echo "======================================"
           echo
-          echo "Arquivo:"
-          ls -lh output/iOSModularHUD.ipa
-          echo
+          echo "Arquivo: iOSModularHUD-MAX.ipa"
           echo "Formato: IPA"
           echo "Arquitetura: arm64"
           echo "SDK: iPhoneOS 15.6"
           echo "Deployment target: iOS 15.0"
-          echo "Compatibilidade alvo: iOS 15.8.8"
-          echo
-
-      # ------------------------------------------------------------
-      # ARTIFACT
-      # ------------------------------------------------------------
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: iOSModularHUD-IPA-iOS15
-          path: output/iOSModularHUD.ipa
-          if-no-files-found: error
-          retention-days: 14
+          echo "Alvo: iOS 15.8.8"
