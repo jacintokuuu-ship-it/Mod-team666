@@ -1,4 +1,4 @@
-name: Build Mod IPA
+name: Build LGL-iOS
 
 on:
   workflow_dispatch:
@@ -13,32 +13,25 @@ env:
 
 jobs:
   build:
-    name: Build iOS App
+    name: Build Theos Package
     runs-on: macos-15
 
     steps:
-      # ============================================================
-      # CHECKOUT
-      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # ============================================================
-      # LOCALIZAR + EXTRAIR ZIP
-      # ============================================================
-      - name: Locate and extract ZIP
+      - name: Locate and extract source
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo "======================================"
-          echo " LOCALIZANDO ZIP"
-          echo "======================================"
-          
+
           ZIP=""
+
           if [ -f "$SOURCE_ZIP" ]; then
             ZIP="$SOURCE_ZIP"
           else
-            ZIP="$(find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -name "$SOURCE_ZIP" -print -quit)"
+            ZIP="$(find "$GITHUB_WORKSPACE" -maxdepth 5 \
+              -type f -name "$SOURCE_ZIP" -print -quit)"
           fi
 
           if [ -z "$ZIP" ]; then
@@ -46,15 +39,13 @@ jobs:
             exit 1
           fi
 
-          echo "ZIP encontrado: $ZIP"
           rm -rf "$GITHUB_WORKSPACE/source"
           mkdir -p "$GITHUB_WORKSPACE/source"
-          
-          echo "Extraindo ZIP..."
+
           unzip -q "$ZIP" -d "$GITHUB_WORKSPACE/source"
-          
-          echo "Procurando Makefile..."
-          APP_MAKEFILE="$(find "$GITHUB_WORKSPACE/source" -type f -name 'Makefile' -print -quit)"
+
+          APP_MAKEFILE="$(find "$GITHUB_WORKSPACE/source" \
+            -type f -name 'Makefile' -print -quit)"
 
           if [ -z "$APP_MAKEFILE" ]; then
             echo "::error::Makefile não encontrado dentro do ZIP."
@@ -62,132 +53,140 @@ jobs:
           fi
 
           APP_DIR="$(dirname "$APP_MAKEFILE")"
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-          echo "Diretório do projeto: $APP_DIR"
 
-      # ============================================================
-      # XCODE & DEPENDÊNCIAS
-      # ============================================================
-      - name: Configure Xcode & Dependencies
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+
+          echo "Projeto encontrado:"
+          echo "$APP_DIR"
+
+      - name: Configure Xcode
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo "======================================"
-          echo " XCODE E DEPENDÊNCIAS"
-          echo "======================================"
-          
-          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+
+          sudo xcode-select \
+            --switch /Applications/Xcode.app/Contents/Developer
+
+          xcodebuild -version
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
           brew install ldid xz perl || true
 
-      # ============================================================
-      # THEOS & SDK
-      # ============================================================
-      - name: Install Theos and SDK
+      - name: Install Theos
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo "======================================"
-          echo " THEOS E SDK"
-          echo "======================================"
-          
-          rm -rf "$THEOS"
-          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
-          git -C "$THEOS" submodule update --init --recursive
-          echo "$THEOS/bin" >> "$GITHUB_PATH"
-          
-          mkdir -p "$THEOS/sdks"
-          git clone --depth 1 https://github.com/theos/sdks.git "$GITHUB_WORKSPACE/theos-sdks"
-          cp -R "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" "$THEOS/sdks/"
 
-      # ============================================================
-      # MAKEFILE VALIDATION
-      # ============================================================
-      - name: Validate Makefile
+          rm -rf "$THEOS"
+
+          git clone \
+            --recursive \
+            --depth 1 \
+            https://github.com/theos/theos.git \
+            "$THEOS"
+
+          git -C "$THEOS" submodule update \
+            --init \
+            --recursive
+
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+
+      - name: Install iOS SDK
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          mkdir -p "$THEOS/sdks"
+
+          rm -rf "$GITHUB_WORKSPACE/theos-sdks"
+
+          git clone \
+            --depth 1 \
+            https://github.com/theos/sdks.git \
+            "$GITHUB_WORKSPACE/theos-sdks"
+
+          if [ ! -d "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" ]; then
+            echo "::error::iPhoneOS15.6.sdk não encontrado."
+            ls -la "$GITHUB_WORKSPACE/theos-sdks"
+            exit 1
+          fi
+
+          cp -R \
+            "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" \
+            "$THEOS/sdks/"
+
+      - name: Validate project
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
           echo "======================================"
-          echo " MAKEFILE ENCONTRADO"
+          echo " PROJETO"
           echo "======================================"
+
+          echo "Diretório:"
+          echo "$APP_DIR"
+
+          echo
+          echo "Makefile:"
           cat "$APP_DIR/Makefile"
 
-      # ============================================================
-      # COMPILAR
-      # ============================================================
-      - name: Compile App
+          echo
+          echo "Arquivos:"
+          find "$APP_DIR" -maxdepth 4 -type f | sort
+
+      - name: Build package
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
+
           echo "======================================"
-          echo " BUILD "
+          echo " THEOS BUILD "
           echo "======================================"
-          
+
           make clean || true
-          make all SDKVERSION="$SDK_VERSION" messages=yes
 
-      # ============================================================
-      # ENCONTRAR APP GERADO DINAMICAMENTE
-      # ============================================================
-      - name: Locate generated .app
+          make package \
+            SDKVERSION="$SDK_VERSION" \
+            messages=yes
+
+      - name: Locate generated package
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo "======================================"
-          echo " LOCALIZANDO APP COMPILADO"
-          echo "======================================"
-          
-          APP="$(find "$PWD/.theos/obj" -type d -name '*.app' -print | head -n 1)"
 
-          if [ -z "$APP" ]; then
-            echo "::error::Nenhum .app foi gerado na pasta .theos/obj"
-            find "$PWD/.theos/obj" -maxdepth 8 -print | sort
+          echo "======================================"
+          echo " PACOTES GERADOS "
+          echo "======================================"
+
+          DEB="$(find "$PWD/packages" \
+            -type f -name '*.deb' -print -quit)"
+
+          if [ -z "$DEB" ]; then
+            echo "::error::Nenhum arquivo .deb foi gerado."
+
+            echo
+            echo "Conteúdo do projeto:"
+            find "$PWD" -maxdepth 5 -print | sort
+
             exit 1
           fi
 
-          APP_NAME="$(basename "$APP" .app)"
-          
-          echo "APP encontrado: $APP"
-          echo "Nome do App: $APP_NAME"
-          
-          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
-          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
+          echo "Pacote encontrado:"
+          echo "$DEB"
 
-      # ============================================================
-      # CRIAR IPA
-      # ============================================================
-      - name: Create IPA
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          echo "======================================"
-          echo " CREATE IPA"
-          echo "======================================"
-          
-          rm -rf "$GITHUB_WORKSPACE/output"
-          mkdir -p "$GITHUB_WORKSPACE/output/Payload"
-          
-          cp -R "$APP_PATH" "$GITHUB_WORKSPACE/output/Payload/$APP_NAME.app"
-          
-          cd "$GITHUB_WORKSPACE/output"
-          /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload "$APP_NAME.ipa"
-          
-          if [ ! -s "$APP_NAME.ipa" ]; then
-            echo "::error::Falha ao criar $APP_NAME.ipa"
-            exit 1
-          fi
-          
-          rm -rf Payload
-          echo "IPA criada: $GITHUB_WORKSPACE/output/$APP_NAME.ipa"
+          echo "DEB_PATH=$DEB" >> "$GITHUB_ENV"
 
-      # ============================================================
-      # UPLOAD ARTIFACT
-      # ============================================================
-      - name: Upload IPA Artifact
+      - name: Upload Theos package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-IPA-iOS15
-          path: output/*.ipa
+          name: LGL-iOS-Theos
+          path: ${{ env.DEB_PATH }}
           if-no-files-found: error
           retention-days: 14
