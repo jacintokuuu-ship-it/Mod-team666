@@ -8,7 +8,7 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: MAKTERzin-ready-to-build.zip
+  SOURCE_ZIP: mod121.zip
   SDK_VERSION: "15.6"
   IOS_DEPLOYMENT: "15.0"
   TARGET: "iphone:clang:15.6:15.0"
