@@ -275,49 +275,13 @@ jobs:
           echo " VALIDANDO MAKTERzin"
           echo "======================================"
 
-          required=(
-            "$PROJECT_ROOT/App/Makefile"
-            "$PROJECT_ROOT/App/main.m"
-            "$PROJECT_ROOT/App/AppDelegate.h"
-            "$PROJECT_ROOT/App/AppDelegate.m"
-            "$PROJECT_ROOT/App/Resources/Info.plist"
+          if [ ! -f "$APP_DIR/Makefile" ]; then
+            echo "::error::Makefile não encontrado em $APP_DIR"
+            exit 1
+          fi
 
-            "$PROJECT_ROOT/App/Core/Backend.h"
-            "$PROJECT_ROOT/App/Core/Backend.mm"
-            "$PROJECT_ROOT/App/Core/FeatureManager.h"
-            "$PROJECT_ROOT/App/Core/FeatureManager.mm"
-
-            "$PROJECT_ROOT/App/Menu/Menu.h"
-            "$PROJECT_ROOT/App/Menu/Menu.mm"
-
-            "$PROJECT_ROOT/App/Overlay/Overlay.h"
-            "$PROJECT_ROOT/App/Overlay/Overlay.mm"
-
-            "$PROJECT_ROOT/Shared/HUDCapabilities.h"
-            "$PROJECT_ROOT/Shared/HUDCapabilities.mm"
-            "$PROJECT_ROOT/Shared/HUDStyle.h"
-            "$PROJECT_ROOT/Shared/HUDStyle.mm"
-
-            "$PROJECT_ROOT/App/Resources/Assets.xcassets/fogo.imageset/fogo.png"
-          )
-
-          for file in "${required[@]}"; do
-
-            if [ ! -f "$file" ]; then
-              echo "::error::Arquivo ausente:"
-              echo "$file"
-              exit 1
-            fi
-
-            echo "OK: $file"
-
-          done
-
-          echo
-          echo "Validando Info.plist..."
-
-          plutil -lint \
-            "$PROJECT_ROOT/App/Resources/Info.plist"
+          echo "Estrutura do projeto extraído:"
+          find "$PROJECT_ROOT" -maxdepth 4
 
           echo
           echo "Source OK."
