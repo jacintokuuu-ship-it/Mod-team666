@@ -8,308 +8,101 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v3-buildfixed.zip
-  SDK_VERSION: "15.6"
 
 jobs:
   build:
-    name: Build Theos Package
-    runs-on: macos-15
+    runs-on: macos-14
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Locate and extract source
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          echo "======================================"
-          echo " LOCALIZANDO SOURCE ZIP "
-          echo "======================================"
-
-          ZIP=""
-
-          if [ -f "$GITHUB_WORKSPACE/$SOURCE_ZIP" ]; then
-            ZIP="$GITHUB_WORKSPACE/$SOURCE_ZIP"
-          else
-            ZIP="$(find "$GITHUB_WORKSPACE" \
-              -maxdepth 6 \
-              -type f \
-              -name "$SOURCE_ZIP" \
-              -print -quit)"
-          fi
-
-          if [ -z "$ZIP" ]; then
-            echo "::error::ZIP não encontrado:"
-            echo "$SOURCE_ZIP"
-            echo
-            echo "ZIPs encontrados:"
-            find "$GITHUB_WORKSPACE" \
-              -type f \
-              -name '*.zip' \
-              -print
-            exit 1
-          fi
-
-          echo "ZIP encontrado:"
-          echo "$ZIP"
-
-          rm -rf "$GITHUB_WORKSPACE/source"
-          mkdir -p "$GITHUB_WORKSPACE/source"
-
-          unzip -q "$ZIP" \
-            -d "$GITHUB_WORKSPACE/source"
-
-          APP_MAKEFILE="$(
-            find "$GITHUB_WORKSPACE/source" \
-              -type f \
-              -name 'Makefile' \
-              -print -quit
-          )"
-
-          if [ -z "$APP_MAKEFILE" ]; then
-            echo "::error::Makefile não encontrado dentro do ZIP."
-            find "$GITHUB_WORKSPACE/source" \
-              -maxdepth 4 \
-              -type f \
-              -print
-            exit 1
-          fi
-
-          APP_DIR="$(dirname "$APP_MAKEFILE")"
-
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-
-          echo
-          echo "Projeto encontrado:"
-          echo "$APP_DIR"
-
-      - name: Configure Xcode
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          sudo xcode-select \
-            --switch /Applications/Xcode.app/Contents/Developer
-
-          xcodebuild -version
-          xcode-select -p
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
 
       - name: Install dependencies
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          brew install \
-            ldid \
-            xz \
-            perl \
-            fakeroot \
-            || true
+          brew update
+          brew install ldid
 
       - name: Install Theos
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          rm -rf "$THEOS"
-
-          git clone \
-            --recursive \
-            --depth 1 \
+          git clone --recursive --depth 1 \
             https://github.com/theos/theos.git \
             "$THEOS"
 
-          git -C "$THEOS" submodule update \
-            --init \
-            --recursive
+          cd "$THEOS"
+          ./bin/install_packages.sh
 
-          echo "$THEOS/bin" >> "$GITHUB_PATH"
-
-          echo "THEOS=$THEOS"
-
-      - name: Install iOS SDK
+      - name: Build
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          mkdir -p "$THEOS/sdks"
+          cd "$GITHUB_WORKSPACE/source/XternalZ-main"
 
-          SDK_DIR="$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+          echo "======================================"
+          echo " LGL INSPIRED - THEOS BUILD"
+          echo "======================================"
 
-          if [ -d "$SDK_DIR" ]; then
-            echo "SDK já disponível:"
-            echo "$SDK_DIR"
-            exit 0
-          fi
+          echo "THEOS: $THEOS"
+          echo "Working directory: $(pwd)"
 
-          rm -rf "$GITHUB_WORKSPACE/theos-sdks"
+          make clean
+          make stage
 
-          git clone \
-            --depth 1 \
-            https://github.com/theos/sdks.git \
-            "$GITHUB_WORKSPACE/theos-sdks"
-
-          if [ ! -d "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS${SDK_VERSION}.sdk" ]; then
-            echo "::error::iPhoneOS${SDK_VERSION}.sdk não encontrado no repositório theos/sdks."
-
-            echo
-            echo "SDKs disponíveis:"
-            find "$GITHUB_WORKSPACE/theos-sdks" \
-              -maxdepth 1 \
-              -type d \
-              -name 'iPhoneOS*.sdk' \
-              -print \
-              | sort
-
-            exit 1
-          fi
-
-          cp -R \
-            "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS${SDK_VERSION}.sdk" \
-            "$THEOS/sdks/"
-
-          echo
-          echo "SDK instalado:"
-          ls -ld "$SDK_DIR"
-
-      - name: Validate project
-        working-directory: ${{ env.APP_DIR }}
+      - name: Verify build
         shell: bash
         run: |
           set -Eeuo pipefail
 
+          cd "$GITHUB_WORKSPACE/source/XternalZ-main"
+
           echo "======================================"
-          echo " PROJETO "
+          echo " VERIFY BUILD"
           echo "======================================"
 
-          echo "Diretório:"
-          pwd
+          test -d .theos/obj
 
-          echo
-          echo "Makefile:"
-          cat Makefile
+          echo "Build directory:"
+          ls -lah .theos/obj/ || true
 
-          echo
-          echo "SDK:"
-          ls -ld "$THEOS/sdks/"*.sdk
+          echo ""
+          echo "Packages directory:"
+          ls -lah packages/ || true
 
-          echo
-          echo "Arquivos:"
-          find . \
-            -maxdepth 4 \
-            -type f \
-            -print \
-            | sort
-
-      - name: Validate source symbols
-        working-directory: ${{ env.APP_DIR }}
+      - name: Verify TIPA
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " SOURCE VALIDATION "
-          echo "======================================"
-
-          if find . \
-            -type f \
-            \( \
-              -name '*.mm' -o \
-              -name '*.m' -o \
-              -name '*.h' -o \
-              -name '*.hpp' -o \
-              -name '*.cpp' \
-            \) \
-            -print0 \
-            | xargs -0 grep -nE \
-              'PlayerCount|PhotonNetwork|Teste|MenuFuncaoTeste' \
-              >/dev/null 2>&1
-          then
-            echo "Referências relacionadas encontradas."
-          else
-            echo "::warning::Nenhuma referência encontrada."
-          fi
-
-      - name: Build package
-        working-directory: ${{ env.APP_DIR }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
+          cd "$GITHUB_WORKSPACE/source/XternalZ-main"
 
           echo "======================================"
-          echo " THEOS BUILD "
+          echo " VERIFY TIPA"
           echo "======================================"
 
-          make clean || true
+          test -f packages/LGLInspired.tipa
 
-          make package \
-            SDKVERSION="$SDK_VERSION" \
-            messages=yes \
-            FINALPACKAGE=1
+          echo ""
+          echo "TIPA successfully generated:"
+          ls -lh packages/LGLInspired.tipa
 
-      - name: Locate generated package
-        working-directory: ${{ env.APP_DIR }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
+          echo ""
+          echo "File information:"
+          file packages/LGLInspired.tipa
 
-          echo "======================================"
-          echo " PACOTES GERADOS "
-          echo "======================================"
-
-          if [ ! -d "$PWD/packages" ]; then
-            echo "::error::Diretório packages não foi criado."
-            find "$PWD" \
-              -maxdepth 5 \
-              -print \
-              | sort
-            exit 1
-          fi
-
-          PKG="$(
-            find "$PWD/packages" \
-              -type f \
-              \( \
-                -name '*.tipa' -o \
-                -name '*.deb' -o \
-                -name '*.ipa' \
-              \) \
-              -print \
-              -quit
-          )"
-
-          if [ -z "$PKG" ]; then
-            echo "::error::Nenhum pacote foi gerado."
-
-            echo
-            echo "Conteúdo de packages:"
-            find "$PWD/packages" \
-              -maxdepth 3 \
-              -print \
-              | sort
-
-            echo
-            echo "Conteúdo do projeto:"
-            find "$PWD" \
-              -maxdepth 5 \
-              -print \
-              | sort
-
-            exit 1
-          fi
-
-          echo "Pacote encontrado:"
-          echo "$PKG"
-
-          echo "PKG_PATH=$PKG" >> "$GITHUB_ENV"
-
-      - name: Upload Theos package
+      - name: Upload TIPA
         uses: actions/upload-artifact@v4
         with:
-          name: LGL-Inspired-Ultimate-Standoff2-Players-v2
-          path: ${{ env.PKG_PATH }}
+          name: LGLInspired-tipa
+          path: source/XternalZ-main/packages/LGLInspired.tipa
           if-no-files-found: error
-          retention-days: 14
