@@ -14,95 +14,287 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - name: Checkout
+
+      # ==========================================
+      # CHECKOUT
+      # ==========================================
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode
+
+      # ==========================================
+      # XCODE
+      # ==========================================
+      - name: Select Xcode 16.2
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.4'
+          xcode-version: '16.2.0'
 
+
+      # ==========================================
+      # TOOLCHAIN CHECK
+      # ==========================================
+      - name: Check build environment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " BUILD ENVIRONMENT"
+          echo "======================================"
+
+          echo ""
+          echo "macOS:"
+          sw_vers
+
+          echo ""
+          echo "Architecture:"
+          uname -m
+
+          echo ""
+          echo "Xcode:"
+          xcodebuild -version
+
+          echo ""
+          echo "Clang:"
+          clang --version
+
+          echo ""
+          echo "Git:"
+          git --version
+
+          echo ""
+          echo "Homebrew:"
+          brew --version
+
+
+      # ==========================================
+      # DEPENDENCIES
+      # ==========================================
       - name: Install dependencies
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          brew update
-          brew install ldid
+          echo "======================================"
+          echo " INSTALLING DEPENDENCIES"
+          echo "======================================"
 
+          brew update
+
+          if ! command -v ldid >/dev/null 2>&1; then
+            brew install ldid
+          else
+            echo "ldid already installed."
+          fi
+
+          echo ""
+          echo "ldid:"
+          ldid -V || true
+
+
+      # ==========================================
+      # THEOS
+      # ==========================================
       - name: Install Theos
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          git clone --recursive --depth 1 \
-            https://github.com/theos/theos.git \
-            "$THEOS"
+          echo "======================================"
+          echo " INSTALLING THEOS"
+          echo "======================================"
+
+          if [ ! -d "$THEOS" ]; then
+            git clone \
+              --recursive \
+              --depth 1 \
+              https://github.com/theos/theos.git \
+              "$THEOS"
+          else
+            echo "Theos directory already exists."
+          fi
 
           cd "$THEOS"
+
           ./bin/install_packages.sh
 
-      - name: Build
+          echo ""
+          echo "THEOS=$THEOS"
+
+
+      # ==========================================
+      # VERIFY PROJECT
+      # ==========================================
+      - name: Verify project structure
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          cd "$GITHUB_WORKSPACE/source/XternalZ-main"
+          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
 
           echo "======================================"
-          echo " LGL INSPIRED - THEOS BUILD"
+          echo " VERIFYING PROJECT"
           echo "======================================"
 
-          echo "THEOS: $THEOS"
-          echo "Working directory: $(pwd)"
+          if [ ! -d "$PROJECT" ]; then
+            echo "ERROR: Project directory not found:"
+            echo "$PROJECT"
+            echo ""
+            echo "Repository contents:"
+            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f | head -200
+            exit 1
+          fi
+
+          if [ ! -f "$PROJECT/Makefile" ]; then
+            echo "ERROR: Makefile not found."
+            exit 1
+          fi
+
+          echo ""
+          echo "Project:"
+          echo "$PROJECT"
+
+          echo ""
+          echo "Makefile:"
+          ls -lh "$PROJECT/Makefile"
+
+          echo ""
+          echo "Project files:"
+          find "$PROJECT" -maxdepth 2 -type f | sort | head -200
+
+
+      # ==========================================
+      # BUILD
+      # ==========================================
+      - name: Build project
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
+
+          cd "$PROJECT"
+
+          echo "======================================"
+          echo " BUILDING LGL INSPIRED"
+          echo "======================================"
+
+          echo ""
+          echo "Current directory:"
+          pwd
+
+          echo ""
+          echo "THEOS:"
+          echo "$THEOS"
+
+          echo ""
+          echo "Cleaning previous build..."
 
           make clean
+
+          echo ""
+          echo "Starting Theos build..."
+
           make stage
 
-      - name: Verify build
+
+      # ==========================================
+      # VERIFY BUILD OUTPUT
+      # ==========================================
+      - name: Verify build output
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          cd "$GITHUB_WORKSPACE/source/XternalZ-main"
+          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
+
+          cd "$PROJECT"
 
           echo "======================================"
-          echo " VERIFY BUILD"
+          echo " VERIFYING BUILD"
           echo "======================================"
 
-          test -d .theos/obj
-
-          echo "Build directory:"
+          echo ""
+          echo "Theos object directory:"
           ls -lah .theos/obj/ || true
 
           echo ""
           echo "Packages directory:"
           ls -lah packages/ || true
 
+          echo ""
+          echo "Staging directory:"
+          ls -lah .theos/_/ || true
+
+
+      # ==========================================
+      # VERIFY TIPA
+      # ==========================================
       - name: Verify TIPA
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          cd "$GITHUB_WORKSPACE/source/XternalZ-main"
+          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
+
+          cd "$PROJECT"
 
           echo "======================================"
-          echo " VERIFY TIPA"
+          echo " VERIFYING TIPA"
           echo "======================================"
 
-          test -f packages/LGLInspired.tipa
+          TIPA="packages/LGLInspired.tipa"
+
+          if [ ! -f "$TIPA" ]; then
+            echo ""
+            echo "ERROR: TIPA file was not generated."
+            echo ""
+            echo "packages/:"
+            ls -lah packages/ || true
+            echo ""
+            echo "Searching for TIPA files:"
+            find . -type f -name "*.tipa" -print
+            exit 1
+          fi
 
           echo ""
-          echo "TIPA successfully generated:"
-          ls -lh packages/LGLInspired.tipa
+          echo "SUCCESS!"
+          echo ""
+          echo "TIPA:"
+          ls -lh "$TIPA"
 
           echo ""
-          echo "File information:"
-          file packages/LGLInspired.tipa
+          echo "File type:"
+          file "$TIPA"
 
-      - name: Upload TIPA
+          echo ""
+          echo "SHA256:"
+          shasum -a 256 "$TIPA"
+
+
+      # ==========================================
+      # UPLOAD TIPA
+      # ==========================================
+      - name: Upload TIPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: LGLInspired-tipa
           path: source/XternalZ-main/packages/LGLInspired.tipa
           if-no-files-found: error
+          retention-days: 7
+
+
+      # ==========================================
+      # UPLOAD BUILD LOGS
+      # ==========================================
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LGLInspired-build-diagnostics
+          path: |
+            source/XternalZ-main/.theos/log
+            source/XternalZ-main/.theos/obj
+          if-no-files-found: ignore
+          retention-days: 3
