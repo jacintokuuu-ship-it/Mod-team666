@@ -8,7 +8,7 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: mod121.zip
+  SOURCE_ZIP: LGL-Inspired-Reorganized-iOS15.zip
   SDK_VERSION: "15.6"
 
 jobs:
@@ -139,6 +139,21 @@ jobs:
           echo "Arquivos:"
           find "$APP_DIR" -maxdepth 4 -type f | sort
 
+      - name: Validate player-count sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "======================================"
+          echo " PLAYER COUNT VALIDATION "
+          echo "======================================"
+          if find "$APP_DIR" -type f \\
+            \( -name '*.mm' -o -name '*.m' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) \\
+            -print0 | xargs -0 grep -nE "PlayerCount|PhotonNetwork|Teste|MenuFuncaoTeste" >/dev/null 2>&1; then
+            echo "Player/menu related symbols found."
+          else
+            echo "::warning::Nenhuma referência de player/menu encontrada; o build continuará para permitir diagnóstico do Makefile."
+          fi
+
       - name: Build package
         working-directory: ${{ env.APP_DIR }}
         shell: bash
@@ -146,7 +161,7 @@ jobs:
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " THEOS BUILD "
+          echo " LGL INSPIRED ULTIMATE - THEOS BUILD "
           echo "======================================"
 
           make clean || true
@@ -186,7 +201,7 @@ jobs:
       - name: Upload Theos package
         uses: actions/upload-artifact@v4
         with:
-          name: LGL-iOS-Theos
+          name: LGL-Inspired-Ultimate-Standoff2-Players-v2
           path: ${{ env.DEB_PATH }}
           if-no-files-found: error
           retention-days: 14
