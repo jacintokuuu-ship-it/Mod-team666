@@ -8,7 +8,7 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: LGL-Inspired-Reorganized-iOS15.zip
+  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v2.zip
   SDK_VERSION: "15.6"
 
 jobs:
@@ -25,30 +25,56 @@ jobs:
         run: |
           set -Eeuo pipefail
 
+          echo "======================================"
+          echo " LOCALIZANDO SOURCE ZIP "
+          echo "======================================"
+
           ZIP=""
 
-          if [ -f "$SOURCE_ZIP" ]; then
-            ZIP="$SOURCE_ZIP"
+          if [ -f "$GITHUB_WORKSPACE/$SOURCE_ZIP" ]; then
+            ZIP="$GITHUB_WORKSPACE/$SOURCE_ZIP"
           else
-            ZIP="$(find "$GITHUB_WORKSPACE" -maxdepth 5 \
-              -type f -name "$SOURCE_ZIP" -print -quit)"
+            ZIP="$(find "$GITHUB_WORKSPACE" \
+              -maxdepth 6 \
+              -type f \
+              -name "$SOURCE_ZIP" \
+              -print -quit)"
           fi
 
           if [ -z "$ZIP" ]; then
-            echo "::error::ZIP não encontrado: $SOURCE_ZIP"
+            echo "::error::ZIP não encontrado:"
+            echo "$SOURCE_ZIP"
+            echo
+            echo "ZIPs encontrados:"
+            find "$GITHUB_WORKSPACE" \
+              -type f \
+              -name '*.zip' \
+              -print
             exit 1
           fi
+
+          echo "ZIP encontrado:"
+          echo "$ZIP"
 
           rm -rf "$GITHUB_WORKSPACE/source"
           mkdir -p "$GITHUB_WORKSPACE/source"
 
-          unzip -q "$ZIP" -d "$GITHUB_WORKSPACE/source"
+          unzip -q "$ZIP" \
+            -d "$GITHUB_WORKSPACE/source"
 
-          APP_MAKEFILE="$(find "$GITHUB_WORKSPACE/source" \
-            -type f -name 'Makefile' -print -quit)"
+          APP_MAKEFILE="$(
+            find "$GITHUB_WORKSPACE/source" \
+              -type f \
+              -name 'Makefile' \
+              -print -quit
+          )"
 
           if [ -z "$APP_MAKEFILE" ]; then
             echo "::error::Makefile não encontrado dentro do ZIP."
+            find "$GITHUB_WORKSPACE/source" \
+              -maxdepth 4 \
+              -type f \
+              -print
             exit 1
           fi
 
@@ -56,6 +82,7 @@ jobs:
 
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
+          echo
           echo "Projeto encontrado:"
           echo "$APP_DIR"
 
@@ -68,13 +95,19 @@ jobs:
             --switch /Applications/Xcode.app/Contents/Developer
 
           xcodebuild -version
+          xcode-select -p
 
       - name: Install dependencies
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          brew install ldid xz perl || true
+          brew install \
+            ldid \
+            xz \
+            perl \
+            fakeroot \
+            || true
 
       - name: Install Theos
         shell: bash
@@ -95,12 +128,22 @@ jobs:
 
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
+          echo "THEOS=$THEOS"
+
       - name: Install iOS SDK
         shell: bash
         run: |
           set -Eeuo pipefail
 
           mkdir -p "$THEOS/sdks"
+
+          SDK_DIR="$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+
+          if [ -d "$SDK_DIR" ]; then
+            echo "SDK já disponível:"
+            echo "$SDK_DIR"
+            exit 0
+          fi
 
           rm -rf "$GITHUB_WORKSPACE/theos-sdks"
 
@@ -109,49 +152,85 @@ jobs:
             https://github.com/theos/sdks.git \
             "$GITHUB_WORKSPACE/theos-sdks"
 
-          if [ ! -d "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" ]; then
-            echo "::error::iPhoneOS15.6.sdk não encontrado."
-            ls -la "$GITHUB_WORKSPACE/theos-sdks"
+          if [ ! -d "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS${SDK_VERSION}.sdk" ]; then
+            echo "::error::iPhoneOS${SDK_VERSION}.sdk não encontrado no repositório theos/sdks."
+
+            echo
+            echo "SDKs disponíveis:"
+            find "$GITHUB_WORKSPACE/theos-sdks" \
+              -maxdepth 1 \
+              -type d \
+              -name 'iPhoneOS*.sdk' \
+              -print \
+              | sort
+
             exit 1
           fi
 
           cp -R \
-            "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk" \
+            "$GITHUB_WORKSPACE/theos-sdks/iPhoneOS${SDK_VERSION}.sdk" \
             "$THEOS/sdks/"
 
+          echo
+          echo "SDK instalado:"
+          ls -ld "$SDK_DIR"
+
       - name: Validate project
+        working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " PROJETO"
+          echo " PROJETO "
           echo "======================================"
 
           echo "Diretório:"
-          echo "$APP_DIR"
+          pwd
 
           echo
           echo "Makefile:"
-          cat "$APP_DIR/Makefile"
+          cat Makefile
+
+          echo
+          echo "SDK:"
+          ls -ld "$THEOS/sdks/"*.sdk
 
           echo
           echo "Arquivos:"
-          find "$APP_DIR" -maxdepth 4 -type f | sort
+          find . \
+            -maxdepth 4 \
+            -type f \
+            -print \
+            | sort
 
-      - name: Validate player-count sources
+      - name: Validate source symbols
+        working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
+
           echo "======================================"
-          echo " PLAYER COUNT VALIDATION "
+          echo " SOURCE VALIDATION "
           echo "======================================"
-          if find "$APP_DIR" -type f \\
-            \( -name '*.mm' -o -name '*.m' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' \) \\
-            -print0 | xargs -0 grep -nE "PlayerCount|PhotonNetwork|Teste|MenuFuncaoTeste" >/dev/null 2>&1; then
-            echo "Player/menu related symbols found."
+
+          if find . \
+            -type f \
+            \( \
+              -name '*.mm' -o \
+              -name '*.m' -o \
+              -name '*.h' -o \
+              -name '*.hpp' -o \
+              -name '*.cpp' \
+            \) \
+            -print0 \
+            | xargs -0 grep -nE \
+              'PlayerCount|PhotonNetwork|Teste|MenuFuncaoTeste' \
+              >/dev/null 2>&1
+          then
+            echo "Referências relacionadas encontradas."
           else
-            echo "::warning::Nenhuma referência de player/menu encontrada; o build continuará para permitir diagnóstico do Makefile."
+            echo "::warning::Nenhuma referência encontrada."
           fi
 
       - name: Build package
@@ -161,14 +240,15 @@ jobs:
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " LGL INSPIRED ULTIMATE - THEOS BUILD "
+          echo " THEOS BUILD "
           echo "======================================"
 
           make clean || true
 
           make package \
             SDKVERSION="$SDK_VERSION" \
-            messages=yes
+            messages=yes \
+            FINALPACKAGE=1
 
       - name: Locate generated package
         working-directory: ${{ env.APP_DIR }}
@@ -180,28 +260,56 @@ jobs:
           echo " PACOTES GERADOS "
           echo "======================================"
 
-          DEB="$(find "$PWD/packages" \
-            -type f -name '*.deb' -print -quit)"
+          if [ ! -d "$PWD/packages" ]; then
+            echo "::error::Diretório packages não foi criado."
+            find "$PWD" \
+              -maxdepth 5 \
+              -print \
+              | sort
+            exit 1
+          fi
 
-          if [ -z "$DEB" ]; then
-            echo "::error::Nenhum arquivo .deb foi gerado."
+          PKG="$(
+            find "$PWD/packages" \
+              -type f \
+              \( \
+                -name '*.tipa' -o \
+                -name '*.deb' -o \
+                -name '*.ipa' \
+              \) \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$PKG" ]; then
+            echo "::error::Nenhum pacote foi gerado."
+
+            echo
+            echo "Conteúdo de packages:"
+            find "$PWD/packages" \
+              -maxdepth 3 \
+              -print \
+              | sort
 
             echo
             echo "Conteúdo do projeto:"
-            find "$PWD" -maxdepth 5 -print | sort
+            find "$PWD" \
+              -maxdepth 5 \
+              -print \
+              | sort
 
             exit 1
           fi
 
           echo "Pacote encontrado:"
-          echo "$DEB"
+          echo "$PKG"
 
-          echo "DEB_PATH=$DEB" >> "$GITHUB_ENV"
+          echo "PKG_PATH=$PKG" >> "$GITHUB_ENV"
 
       - name: Upload Theos package
         uses: actions/upload-artifact@v4
         with:
           name: LGL-Inspired-Ultimate-Standoff2-Players-v2
-          path: ${{ env.DEB_PATH }}
+          path: ${{ env.PKG_PATH }}
           if-no-files-found: error
           retention-days: 14
