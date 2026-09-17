@@ -8,7 +8,7 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v2.zip
+  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v2-1.zip
   SDK_VERSION: "15.6"
 
 jobs:
