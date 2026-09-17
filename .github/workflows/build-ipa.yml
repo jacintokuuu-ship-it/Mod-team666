@@ -15,69 +15,67 @@ jobs:
 
     steps:
 
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
 
-      # ==========================================
-      # XCODE
-      # ==========================================
-      - name: Select Xcode
+      - name: Select Xcode 16.2
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.2.0'
 
 
-      # ==========================================
-      # ENVIRONMENT
-      # ==========================================
-      - name: Check environment
+      - name: Check Xcode SDKs
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " ENVIRONMENT"
+          echo " XCODE"
           echo "======================================"
 
-          echo ""
-          echo "macOS:"
-          sw_vers
-
-          echo ""
-          echo "Architecture:"
-          uname -m
-
-          echo ""
-          echo "Xcode:"
           xcodebuild -version
 
           echo ""
-          echo "Clang:"
-          clang --version
+          echo "Available SDKs:"
+          xcodebuild -showsdks
 
           echo ""
-          echo "Git:"
-          git --version
+          echo "Xcode path:"
+          xcode-select -p
 
           echo ""
-          echo "Homebrew:"
-          brew --version
+          echo "iPhoneOS SDK:"
+          xcrun --sdk iphoneos --show-sdk-path
 
 
-      # ==========================================
-      # THEOS
-      # ==========================================
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " DEPENDENCIES"
+          echo "======================================"
+
+          brew update
+
+          if ! command -v ldid >/dev/null 2>&1; then
+            brew install ldid
+          fi
+
+          echo ""
+          echo "ldid:"
+          ldid -V || true
+
+
       - name: Install Theos
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " INSTALLING THEOS"
+          echo " THEOS"
           echo "======================================"
 
           rm -rf "$THEOS"
@@ -89,46 +87,47 @@ jobs:
             "$THEOS"
 
           echo ""
-          echo "Theos cloned successfully."
+          echo "Theos installed."
+
+          test -f "$THEOS/makefiles/common.mk"
 
           echo ""
-          echo "Running official Theos installer..."
+          echo "Theos commit:"
+          git -C "$THEOS" rev-parse --short HEAD
 
-          bash "$THEOS/bin/install-theos"
 
-
-      # ==========================================
-      # VERIFY THEOS
-      # ==========================================
-      - name: Verify Theos
+      - name: Configure Theos SDK
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " VERIFYING THEOS"
+          echo " CONFIGURING SDK"
           echo "======================================"
 
-          test -d "$THEOS"
-          test -f "$THEOS/makefiles/common.mk"
-          test -f "$THEOS/bin/update-theos"
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+
+          echo "Xcode iPhoneOS SDK:"
+          echo "$SDK_PATH"
+
+          mkdir -p "$THEOS/sdks"
+
+          SDK_NAME="$(basename "$SDK_PATH")"
 
           echo ""
-          echo "THEOS:"
-          echo "$THEOS"
+          echo "SDK name:"
+          echo "$SDK_NAME"
 
           echo ""
-          echo "Theos version:"
-          git -C "$THEOS" rev-parse --short HEAD
+          echo "Linking Xcode SDK into Theos..."
+
+          ln -sfn "$SDK_PATH" "$THEOS/sdks/$SDK_NAME"
 
           echo ""
-          echo "Installed SDKs:"
-          find "$THEOS/sdks" -maxdepth 1 -type d -name "*.sdk" -print | sort || true
+          echo "Theos SDK directory:"
+          ls -lah "$THEOS/sdks"
 
 
-      # ==========================================
-      # VERIFY PROJECT
-      # ==========================================
       - name: Verify project
         shell: bash
         run: |
@@ -137,20 +136,11 @@ jobs:
           PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
 
           echo "======================================"
-          echo " VERIFYING PROJECT"
+          echo " PROJECT"
           echo "======================================"
 
-          if [ ! -d "$PROJECT" ]; then
-            echo "ERROR: Project directory not found:"
-            echo "$PROJECT"
-            exit 1
-          fi
-
-          if [ ! -f "$PROJECT/Makefile" ]; then
-            echo "ERROR: Makefile not found:"
-            echo "$PROJECT/Makefile"
-            exit 1
-          fi
+          test -d "$PROJECT"
+          test -f "$PROJECT/Makefile"
 
           echo ""
           echo "Project:"
@@ -161,9 +151,6 @@ jobs:
           ls -lh "$PROJECT/Makefile"
 
 
-      # ==========================================
-      # BUILD
-      # ==========================================
       - name: Build
         shell: bash
         run: |
@@ -174,16 +161,16 @@ jobs:
           cd "$PROJECT"
 
           echo "======================================"
-          echo " BUILDING PROJECT"
+          echo " BUILD"
           echo "======================================"
-
-          echo ""
-          echo "Working directory:"
-          pwd
 
           echo ""
           echo "THEOS:"
           echo "$THEOS"
+
+          echo ""
+          echo "SDKs:"
+          ls -lah "$THEOS/sdks"
 
           echo ""
           echo "Cleaning..."
@@ -191,15 +178,12 @@ jobs:
           make clean
 
           echo ""
-          echo "Building and staging..."
+          echo "Compiling..."
 
           make stage
 
 
-      # ==========================================
-      # VERIFY BUILD
-      # ==========================================
-      - name: Verify build
+      - name: Verify output
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -209,47 +193,18 @@ jobs:
           cd "$PROJECT"
 
           echo "======================================"
-          echo " BUILD VERIFICATION"
+          echo " OUTPUT"
           echo "======================================"
 
           echo ""
-          echo "Theos object directory:"
-          ls -lah .theos/obj/ || true
-
-          echo ""
-          echo "Staging directory:"
-          ls -lah .theos/_/ || true
-
-          echo ""
-          echo "Packages directory:"
+          echo "Packages:"
           ls -lah packages/ || true
 
-
-      # ==========================================
-      # FIND TIPA
-      # ==========================================
-      - name: Locate TIPA
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
-
-          cd "$PROJECT"
-
-          echo "======================================"
-          echo " LOCATING TIPA"
-          echo "======================================"
-
           echo ""
-          echo "Searching for .tipa files..."
+          echo "TIPA files:"
+          find . -type f -name "*.tipa" -print
 
-          find "$PROJECT" -type f -name "*.tipa" -print || true
 
-
-      # ==========================================
-      # VERIFY TIPA
-      # ==========================================
       - name: Verify TIPA
         shell: bash
         run: |
@@ -259,44 +214,36 @@ jobs:
 
           cd "$PROJECT"
 
+          TIPA="packages/LGLInspired.tipa"
+
           echo "======================================"
-          echo " VERIFYING TIPA"
+          echo " TIPA VERIFICATION"
           echo "======================================"
 
-          if [ ! -f "packages/LGLInspired.tipa" ]; then
+          if [ ! -f "$TIPA" ]; then
             echo ""
-            echo "ERROR:"
-            echo "packages/LGLInspired.tipa was not generated."
+            echo "ERROR: $TIPA was not generated."
 
             echo ""
-            echo "Available packages:"
-            find packages -maxdepth 2 -type f -print 2>/dev/null || true
-
-            echo ""
-            echo "Available TIPA files:"
-            find . -type f -name "*.tipa" -print || true
+            echo "Searching entire project:"
+            find . -type f \( -name "*.tipa" -o -name "*.deb" -o -name "*.dylib" \) -print
 
             exit 1
           fi
 
           echo ""
-          echo "SUCCESS!"
-          echo ""
-          echo "TIPA:"
-          ls -lh packages/LGLInspired.tipa
+          echo "TIPA generated successfully:"
+          ls -lh "$TIPA"
 
           echo ""
-          echo "File type:"
-          file packages/LGLInspired.tipa
+          echo "Type:"
+          file "$TIPA"
 
           echo ""
           echo "SHA256:"
-          shasum -a 256 packages/LGLInspired.tipa
+          shasum -a 256 "$TIPA"
 
 
-      # ==========================================
-      # UPLOAD TIPA
-      # ==========================================
       - name: Upload TIPA
         uses: actions/upload-artifact@v4
         with:
@@ -306,16 +253,12 @@ jobs:
           retention-days: 7
 
 
-      # ==========================================
-      # UPLOAD DIAGNOSTICS
-      # ==========================================
-      - name: Upload build diagnostics
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LGLInspired-build-diagnostics
+          name: LGLInspired-diagnostics
           path: |
-            source/XternalZ-main/.theos/obj
-            source/XternalZ-main/.theos/_/
+            source/XternalZ-main/.theos
           if-no-files-found: ignore
           retention-days: 3
