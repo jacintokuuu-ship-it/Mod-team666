@@ -1,4 +1,4 @@
-name: Build LGL-iOS
+name: Build LGL-Inspired
 
 on:
   workflow_dispatch:
@@ -8,24 +8,114 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
+  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v3-buildfixed.zip
+  SDK_VERSION: "15.6"
 
 jobs:
   build:
-    runs-on: macos-14
+    name: Build iOS Project
+    runs-on: macos-15
 
     steps:
 
-      - name: Checkout
-        uses: actions/checkout@v4
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
 
-      - name: Select Xcode 16.2
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '16.2.0'
+      # ============================================================
+      # LOCALIZAR + EXTRAIR ZIP
+      # ============================================================
+      - name: Locate and extract ZIP
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " LOCALIZANDO ZIP"
+          echo "======================================"
+
+          ZIP=""
+
+          if [ -f "$SOURCE_ZIP" ]; then
+            ZIP="$SOURCE_ZIP"
+          else
+            ZIP="$(find "$GITHUB_WORKSPACE" \
+              -maxdepth 6 \
+              -type f \
+              -name "$SOURCE_ZIP" \
+              -print \
+              -quit)"
+          fi
+
+          if [ -z "$ZIP" ]; then
+            echo "::error::ZIP não encontrado: $SOURCE_ZIP"
+            echo ""
+            echo "Arquivos encontrados:"
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 6 \
+              -type f \
+              -name "*.zip" \
+              -print
+            exit 1
+          fi
+
+          echo "ZIP encontrado:"
+          echo "$ZIP"
+
+          rm -rf "$GITHUB_WORKSPACE/source"
+
+          mkdir -p "$GITHUB_WORKSPACE/source"
+
+          echo ""
+          echo "Extraindo ZIP..."
+
+          unzip -q "$ZIP" \
+            -d "$GITHUB_WORKSPACE/source"
+
+          echo ""
+          echo "Procurando Makefile..."
+
+          APP_MAKEFILE="$(
+            find "$GITHUB_WORKSPACE/source" \
+              -type f \
+              -name "Makefile" \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$APP_MAKEFILE" ]; then
+            echo "::error::Makefile não encontrado dentro do ZIP."
+
+            echo ""
+            echo "Estrutura extraída:"
+            find "$GITHUB_WORKSPACE/source" \
+              -maxdepth 4 \
+              -print \
+              | sort
+
+            exit 1
+          fi
+
+          APP_DIR="$(dirname "$APP_MAKEFILE")"
+
+          echo ""
+          echo "Makefile encontrado:"
+          echo "$APP_MAKEFILE"
+
+          echo ""
+          echo "Diretório do projeto:"
+          echo "$APP_DIR"
+
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
 
-      - name: Check Xcode SDKs
+      # ============================================================
+      # XCODE
+      # ============================================================
+      - name: Configure Xcode
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -34,41 +124,56 @@ jobs:
           echo " XCODE"
           echo "======================================"
 
+          sudo xcode-select \
+            --switch \
+            /Applications/Xcode.app/Contents/Developer
+
+          echo ""
+          echo "Xcode:"
           xcodebuild -version
 
           echo ""
-          echo "Available SDKs:"
+          echo "SDKs disponíveis:"
           xcodebuild -showsdks
 
-          echo ""
-          echo "Xcode path:"
-          xcode-select -p
 
-          echo ""
-          echo "iPhoneOS SDK:"
-          xcrun --sdk iphoneos --show-sdk-path
-
-
+      # ============================================================
+      # DEPENDÊNCIAS
+      # ============================================================
       - name: Install dependencies
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " DEPENDENCIES"
+          echo " DEPENDÊNCIAS"
           echo "======================================"
 
-          brew update
-
-          if ! command -v ldid >/dev/null 2>&1; then
+          if command -v ldid >/dev/null 2>&1; then
+            echo "ldid já está instalado."
+          else
+            echo "Instalando ldid..."
             brew install ldid
+          fi
+
+          if command -v xz >/dev/null 2>&1; then
+            echo "xz disponível."
+          fi
+
+          if command -v perl >/dev/null 2>&1; then
+            echo "perl disponível."
           fi
 
           echo ""
           echo "ldid:"
+          command -v ldid
+
           ldid -V || true
 
 
+      # ============================================================
+      # THEOS
+      # ============================================================
       - name: Install Theos
         shell: bash
         run: |
@@ -87,7 +192,15 @@ jobs:
             "$THEOS"
 
           echo ""
-          echo "Theos installed."
+          echo "Atualizando submodules..."
+
+          git -C "$THEOS" \
+            submodule update \
+            --init \
+            --recursive
+
+          echo ""
+          echo "Theos instalado."
 
           test -f "$THEOS/makefiles/common.mk"
 
@@ -95,170 +208,277 @@ jobs:
           echo "Theos commit:"
           git -C "$THEOS" rev-parse --short HEAD
 
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
 
-      - name: Configure Theos SDK
+
+      # ============================================================
+      # SDK
+      # ============================================================
+      - name: Install iPhoneOS SDK
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " CONFIGURING SDK"
+          echo " IPHONEOS SDK $SDK_VERSION"
           echo "======================================"
 
-          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          SDK_REPO="$GITHUB_WORKSPACE/theos-sdks"
 
-          echo "Xcode iPhoneOS SDK:"
-          echo "$SDK_PATH"
+          rm -rf "$SDK_REPO"
+
+          echo "Baixando Theos SDKs..."
+
+          git clone \
+            --depth 1 \
+            https://github.com/theos/sdks.git \
+            "$SDK_REPO"
+
+          SDK_SOURCE="$SDK_REPO/iPhoneOS${SDK_VERSION}.sdk"
+          SDK_DEST="$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+
+          if [ ! -d "$SDK_SOURCE" ]; then
+            echo "::error::SDK iPhoneOS${SDK_VERSION}.sdk não encontrado."
+
+            echo ""
+            echo "SDKs disponíveis no repositório:"
+            find "$SDK_REPO" \
+              -maxdepth 1 \
+              -type d \
+              -name "iPhoneOS*.sdk" \
+              -print \
+              | sort
+
+            exit 1
+          fi
 
           mkdir -p "$THEOS/sdks"
 
-          SDK_NAME="$(basename "$SDK_PATH")"
+          rm -rf "$SDK_DEST"
+
+          cp -R \
+            "$SDK_SOURCE" \
+            "$THEOS/sdks/"
 
           echo ""
-          echo "SDK name:"
-          echo "$SDK_NAME"
-
-          echo ""
-          echo "Linking Xcode SDK into Theos..."
-
-          ln -sfn "$SDK_PATH" "$THEOS/sdks/$SDK_NAME"
-
-          echo ""
-          echo "Theos SDK directory:"
-          ls -lah "$THEOS/sdks"
+          echo "SDK instalado:"
+          ls -ld "$SDK_DEST"
 
 
-      - name: Verify project
+      # ============================================================
+      # VALIDAR THEOS + SDK
+      # ============================================================
+      - name: Validate Theos and SDK
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
-
           echo "======================================"
-          echo " PROJECT"
+          echo " VALIDANDO THEOS + SDK"
           echo "======================================"
 
-          test -d "$PROJECT"
-          test -f "$PROJECT/Makefile"
+          test -f "$THEOS/makefiles/common.mk"
 
-          echo ""
-          echo "Project:"
-          echo "$PROJECT"
-
-          echo ""
-          echo "Makefile:"
-          ls -lh "$PROJECT/Makefile"
-
-
-      - name: Build
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
-
-          cd "$PROJECT"
-
-          echo "======================================"
-          echo " BUILD"
-          echo "======================================"
+          test -d "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
           echo ""
           echo "THEOS:"
           echo "$THEOS"
 
           echo ""
-          echo "SDKs:"
-          ls -lah "$THEOS/sdks"
+          echo "SDK:"
+          ls -ld "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
           echo ""
-          echo "Cleaning..."
+          echo "Theos SDKs:"
+          find "$THEOS/sdks" \
+            -maxdepth 1 \
+            -type d \
+            -name "*.sdk" \
+            -print \
+            | sort
+
+
+      # ============================================================
+      # MAKEFILE
+      # ============================================================
+      - name: Validate Makefile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " MAKEFILE"
+          echo "======================================"
+
+          echo ""
+          echo "Projeto:"
+          echo "$APP_DIR"
+
+          echo ""
+          echo "Makefile:"
+          cat "$APP_DIR/Makefile"
+
+
+      # ============================================================
+      # COMPILAR
+      # ============================================================
+      - name: Compile project
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " BUILD"
+          echo "======================================"
+
+          echo ""
+          echo "Diretório:"
+          pwd
+
+          echo ""
+          echo "THEOS:"
+          echo "$THEOS"
+
+          echo ""
+          echo "SDK:"
+          echo "$SDK_VERSION"
+
+          echo ""
+          echo "Limpando build anterior..."
 
           make clean
 
           echo ""
-          echo "Compiling..."
+          echo "Compilando..."
 
-          make stage
+          make all \
+            SDKVERSION="$SDK_VERSION" \
+            messages=yes
 
 
-      - name: Verify output
+      # ============================================================
+      # LOCALIZAR APP
+      # ============================================================
+      - name: Locate generated APP
+        working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
-
-          cd "$PROJECT"
-
           echo "======================================"
-          echo " OUTPUT"
+          echo " LOCALIZANDO APP"
           echo "======================================"
 
-          echo ""
-          echo "Packages:"
-          ls -lah packages/ || true
+          APP="$(
+            find "$PWD/.theos/obj" \
+              -type d \
+              -name "*.app" \
+              -print \
+              | head -n 1
+          )"
 
-          echo ""
-          echo "TIPA files:"
-          find . -type f -name "*.tipa" -print
-
-
-      - name: Verify TIPA
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          PROJECT="$GITHUB_WORKSPACE/source/XternalZ-main"
-
-          cd "$PROJECT"
-
-          TIPA="packages/LGLInspired.tipa"
-
-          echo "======================================"
-          echo " TIPA VERIFICATION"
-          echo "======================================"
-
-          if [ ! -f "$TIPA" ]; then
-            echo ""
-            echo "ERROR: $TIPA was not generated."
+          if [ -z "$APP" ]; then
+            echo "::error::Nenhum .app foi gerado."
 
             echo ""
-            echo "Searching entire project:"
-            find . -type f \( -name "*.tipa" -o -name "*.deb" -o -name "*.dylib" \) -print
+            echo "Conteúdo de .theos/obj:"
+            find "$PWD/.theos/obj" \
+              -maxdepth 8 \
+              -print \
+              | sort
 
             exit 1
           fi
 
-          echo ""
-          echo "TIPA generated successfully:"
-          ls -lh "$TIPA"
+          APP_NAME="$(basename "$APP" .app)"
 
           echo ""
-          echo "Type:"
-          file "$TIPA"
+          echo "APP encontrado:"
+          echo "$APP"
+
+          echo ""
+          echo "Nome:"
+          echo "$APP_NAME"
+
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
+
+
+      # ============================================================
+      # CRIAR IPA
+      # ============================================================
+      - name: Create IPA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " CRIANDO IPA"
+          echo "======================================"
+
+          rm -rf "$GITHUB_WORKSPACE/output"
+
+          mkdir -p \
+            "$GITHUB_WORKSPACE/output/Payload"
+
+          cp -R \
+            "$APP_PATH" \
+            "$GITHUB_WORKSPACE/output/Payload/$APP_NAME.app"
+
+          cd "$GITHUB_WORKSPACE/output"
+
+          /usr/bin/ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
+            Payload \
+            "$APP_NAME.ipa"
+
+          if [ ! -s "$APP_NAME.ipa" ]; then
+            echo "::error::Falha ao criar IPA."
+            exit 1
+          fi
+
+          rm -rf Payload
+
+          echo ""
+          echo "IPA criada:"
+          echo "$GITHUB_WORKSPACE/output/$APP_NAME.ipa"
+
+          echo ""
+          echo "Tamanho:"
+          ls -lh "$APP_NAME.ipa"
 
           echo ""
           echo "SHA256:"
-          shasum -a 256 "$TIPA"
+          shasum -a 256 "$APP_NAME.ipa"
 
 
-      - name: Upload TIPA
+      # ============================================================
+      # UPLOAD IPA
+      # ============================================================
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LGLInspired-tipa
-          path: source/XternalZ-main/packages/LGLInspired.tipa
+          name: ${{ env.APP_NAME }}-IPA-iOS15
+          path: output/*.ipa
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
 
 
-      - name: Upload diagnostics
+      # ============================================================
+      # DIAGNÓSTICOS
+      # ============================================================
+      - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LGLInspired-diagnostics
+          name: ${{ env.APP_NAME }}-build-diagnostics
           path: |
-            source/XternalZ-main/.theos
+            source/**/.theos/obj
+            source/**/.theos/log
           if-no-files-found: ignore
           retention-days: 3
