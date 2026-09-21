@@ -55,7 +55,7 @@ jobs:
           if [ -z "$ZIP_PATH" ]; then
             echo "::error::ZIP não encontrado: $SOURCE_ZIP"
             echo ""
-            echo "ZIPs encontrados no repositório:"
+            echo "ZIPs encontrados:"
             find "$GITHUB_WORKSPACE" \
               -type f \
               -iname "*.zip" \
@@ -79,7 +79,7 @@ jobs:
             -d "$GITHUB_WORKSPACE/source"
 
           echo ""
-          echo "Procurando makefile..."
+          echo "Procurando Makefile..."
 
           PROJECT_MAKEFILE="$(
             find "$GITHUB_WORKSPACE/source" \
@@ -90,10 +90,8 @@ jobs:
           )"
 
           if [ -z "$PROJECT_MAKEFILE" ]; then
-            echo "::error::Nenhum Makefile/makefile encontrado."
+            echo "::error::Nenhum Makefile encontrado."
 
-            echo ""
-            echo "Estrutura encontrada:"
             find "$GITHUB_WORKSPACE/source" \
               -maxdepth 6 \
               -print \
@@ -127,12 +125,9 @@ jobs:
           echo " XCODE"
           echo "=============================================="
 
-          echo ""
-          echo "Xcode selecionado:"
           xcode-select -p
 
           echo ""
-          echo "Versão:"
           xcodebuild -version
 
           echo ""
@@ -153,10 +148,7 @@ jobs:
           echo "=============================================="
 
           if ! command -v ldid >/dev/null 2>&1; then
-            echo "Instalando ldid..."
             brew install ldid
-          else
-            echo "ldid já instalado."
           fi
 
           echo ""
@@ -164,7 +156,6 @@ jobs:
           command -v ldid
 
           echo ""
-          echo "Versão:"
           ldid -V || true
 
 
@@ -201,7 +192,7 @@ jobs:
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
           echo ""
-          echo "Theos instalado em:"
+          echo "Theos:"
           echo "$THEOS"
 
           echo ""
@@ -237,7 +228,7 @@ jobs:
             echo "::error::SDK iPhoneOS${SDK_VERSION}.sdk não encontrado."
 
             echo ""
-            echo "SDKs disponíveis no repositório:"
+            echo "SDKs disponíveis:"
             find "$SDK_REPO" \
               -maxdepth 1 \
               -type d \
@@ -256,10 +247,7 @@ jobs:
             "$SDK_SOURCE" \
             "$THEOS/sdks/"
 
-          if [ ! -d "$SDK_DEST" ]; then
-            echo "::error::Falha ao copiar SDK."
-            exit 1
-          fi
+          test -d "$SDK_DEST"
 
           echo ""
           echo "SDK instalado:"
@@ -275,7 +263,7 @@ jobs:
           set -Eeuo pipefail
 
           echo "=============================================="
-          echo " VALIDAÇÃO"
+          echo " VALIDAÇÃO THEOS / SDK"
           echo "=============================================="
 
           test -f "$THEOS/makefiles/common.mk"
@@ -288,8 +276,79 @@ jobs:
 
           echo ""
           echo "SDK:"
-          ls -ld \
-            "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+          ls -ld "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+
+
+      # ============================================================
+      # VALIDAR E CORRIGIR TARGET DO MAKEFILE
+      # ============================================================
+      - name: Configure project SDK target
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "=============================================="
+          echo " CONFIGURANDO TARGET"
+          echo "=============================================="
+
+          MAKEFILE=""
+
+          if [ -f "Makefile" ]; then
+            MAKEFILE="Makefile"
+          elif [ -f "makefile" ]; then
+            MAKEFILE="makefile"
+          else
+            echo "::error::Makefile não encontrado."
+            exit 1
+          fi
+
+          echo ""
+          echo "Makefile:"
+          echo "$MAKEFILE"
+
+          echo ""
+          echo "TARGET antes:"
+          grep -nE '^[[:space:]]*TARGET[[:space:]]*[:?+]?=' "$MAKEFILE" || true
+
+          # Remove TARGET antigo caso exista.
+          sed -i.bak \
+            -E '/^[[:space:]]*TARGET[[:space:]]*[:?+]?=/d' \
+            "$MAKEFILE"
+
+          # Remove possíveis SDKVERSION fixados pelo projeto.
+          sed -i.bak2 \
+            -E '/^[[:space:]]*SDKVERSION[[:space:]]*[:?+]?=/d' \
+            "$MAKEFILE"
+
+          # Remove possíveis deployment targets fixados.
+          sed -i.bak3 \
+            -E '/^[[:space:]]*TARGET_OS_DEPLOYMENT_VERSION[[:space:]]*[:?+]?=/d' \
+            "$MAKEFILE"
+
+          cat >> "$MAKEFILE" <<EOF
+
+# ============================================================
+# CI BUILD CONFIGURATION
+# ============================================================
+TARGET = iphone:clang:${SDK_VERSION}:${MIN_IOS}
+SDKVERSION = ${SDK_VERSION}
+TARGET_OS_DEPLOYMENT_VERSION = ${MIN_IOS}
+EOF
+
+          echo ""
+          echo "TARGET depois:"
+          tail -n 12 "$MAKEFILE"
+
+          echo ""
+          echo "Verificando SDK..."
+
+          test -d "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+
+          echo ""
+          echo "Configuração final:"
+          echo "SDK     = $SDK_VERSION"
+          echo "iOS min = $MIN_IOS"
 
 
       # ============================================================
@@ -310,18 +369,15 @@ jobs:
           pwd
 
           echo ""
+          echo "Makefile:"
+          cat Makefile
+
+          echo ""
           echo "Arquivos principais:"
           find . \
             -maxdepth 3 \
             -type f \
             | sort
-
-          echo ""
-          echo "=============================================="
-          echo " MAKEFILE"
-          echo "=============================================="
-
-          cat makefile
 
 
       # ============================================================
@@ -363,6 +419,7 @@ jobs:
 
           make package \
             SDKVERSION="$SDK_VERSION" \
+            TARGET_OS_DEPLOYMENT_VERSION="$MIN_IOS" \
             FINALPACKAGE=1 \
             DEBUG=0 \
             messages=yes \
@@ -385,6 +442,11 @@ jobs:
           echo " PROCURANDO TIPA"
           echo "=============================================="
 
+          if [ ! -d "$PWD/packages" ]; then
+            echo "::error::Diretório packages não existe."
+            exit 1
+          fi
+
           TIPA="$(
             find "$PWD/packages" \
               -maxdepth 1 \
@@ -397,8 +459,6 @@ jobs:
           if [ -z "$TIPA" ]; then
             echo "::error::Nenhum .tipa foi gerado."
 
-            echo ""
-            echo "Conteúdo do projeto:"
             find "$PWD" \
               -maxdepth 5 \
               -print \
@@ -410,7 +470,7 @@ jobs:
           TIPA_NAME="$(basename "$TIPA")"
 
           echo ""
-          echo "TIPA encontrado:"
+          echo "TIPA:"
           echo "$TIPA"
 
           echo ""
@@ -433,8 +493,9 @@ jobs:
           echo " CRIANDO IPA"
           echo "=============================================="
 
-          rm -rf "$GITHUB_WORKSPACE/ipa_extract"
-          rm -rf "$GITHUB_WORKSPACE/output"
+          rm -rf \
+            "$GITHUB_WORKSPACE/ipa_extract" \
+            "$GITHUB_WORKSPACE/output"
 
           mkdir -p \
             "$GITHUB_WORKSPACE/ipa_extract" \
@@ -473,14 +534,7 @@ jobs:
           echo "$APP"
 
           echo ""
-          echo "Nome:"
-          echo "$APP_NAME"
-
-          echo ""
           echo "Criando IPA..."
-
-          rm -rf \
-            "$GITHUB_WORKSPACE/output/Payload"
 
           mkdir -p \
             "$GITHUB_WORKSPACE/output/Payload"
@@ -517,7 +571,8 @@ jobs:
           shasum -a 256 "$APP_NAME.ipa"
 
           echo ""
-          echo "TIPA original:"
+          echo "Copiando TIPA original..."
+
           cp \
             "$TIPA_PATH" \
             "$GITHUB_WORKSPACE/output/$TIPA_NAME"
