@@ -1,4 +1,4 @@
-name: Build LGL-Inspired
+name: Build TROLLTHEOS ESP BOX
 
 on:
   workflow_dispatch:
@@ -8,12 +8,12 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v3-buildfixed.zip
+  SOURCE_ZIP: TROLLTHEOS-FF-arm64e-ESP-BOX-current-1.zip
   SDK_VERSION: "15.6"
 
 jobs:
   build:
-    name: Build iOS Project
+    name: Build iOS ESP Box
     runs-on: macos-15
 
     steps:
@@ -42,18 +42,20 @@ jobs:
           if [ -f "$SOURCE_ZIP" ]; then
             ZIP="$SOURCE_ZIP"
           else
-            ZIP="$(find "$GITHUB_WORKSPACE" \
-              -maxdepth 6 \
-              -type f \
-              -name "$SOURCE_ZIP" \
-              -print \
-              -quit)"
+            ZIP="$(
+              find "$GITHUB_WORKSPACE" \
+                -maxdepth 6 \
+                -type f \
+                -name "$SOURCE_ZIP" \
+                -print \
+                -quit
+            )"
           fi
 
           if [ -z "$ZIP" ]; then
             echo "::error::ZIP não encontrado: $SOURCE_ZIP"
             echo ""
-            echo "Arquivos encontrados:"
+            echo "ZIPs encontrados:"
             find "$GITHUB_WORKSPACE" \
               -maxdepth 6 \
               -type f \
@@ -66,11 +68,10 @@ jobs:
           echo "$ZIP"
 
           rm -rf "$GITHUB_WORKSPACE/source"
-
           mkdir -p "$GITHUB_WORKSPACE/source"
 
           echo ""
-          echo "Extraindo ZIP..."
+          echo "Extraindo..."
 
           unzip -q "$ZIP" \
             -d "$GITHUB_WORKSPACE/source"
@@ -92,7 +93,7 @@ jobs:
             echo ""
             echo "Estrutura extraída:"
             find "$GITHUB_WORKSPACE/source" \
-              -maxdepth 4 \
+              -maxdepth 5 \
               -print \
               | sort
 
@@ -102,11 +103,11 @@ jobs:
           APP_DIR="$(dirname "$APP_MAKEFILE")"
 
           echo ""
-          echo "Makefile encontrado:"
+          echo "Makefile:"
           echo "$APP_MAKEFILE"
 
           echo ""
-          echo "Diretório do projeto:"
+          echo "Diretório:"
           echo "$APP_DIR"
 
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
@@ -129,7 +130,6 @@ jobs:
             /Applications/Xcode.app/Contents/Developer
 
           echo ""
-          echo "Xcode:"
           xcodebuild -version
 
           echo ""
@@ -156,18 +156,7 @@ jobs:
             brew install ldid
           fi
 
-          if command -v xz >/dev/null 2>&1; then
-            echo "xz disponível."
-          fi
-
-          if command -v perl >/dev/null 2>&1; then
-            echo "perl disponível."
-          fi
-
-          echo ""
-          echo "ldid:"
           command -v ldid
-
           ldid -V || true
 
 
@@ -191,21 +180,15 @@ jobs:
             https://github.com/theos/theos.git \
             "$THEOS"
 
-          echo ""
-          echo "Atualizando submodules..."
-
           git -C "$THEOS" \
             submodule update \
             --init \
             --recursive
 
-          echo ""
-          echo "Theos instalado."
-
           test -f "$THEOS/makefiles/common.mk"
 
           echo ""
-          echo "Theos commit:"
+          echo "Theos:"
           git -C "$THEOS" rev-parse --short HEAD
 
           echo "$THEOS/bin" >> "$GITHUB_PATH"
@@ -227,8 +210,6 @@ jobs:
 
           rm -rf "$SDK_REPO"
 
-          echo "Baixando Theos SDKs..."
-
           git clone \
             --depth 1 \
             https://github.com/theos/sdks.git \
@@ -241,7 +222,7 @@ jobs:
             echo "::error::SDK iPhoneOS${SDK_VERSION}.sdk não encontrado."
 
             echo ""
-            echo "SDKs disponíveis no repositório:"
+            echo "SDKs disponíveis:"
             find "$SDK_REPO" \
               -maxdepth 1 \
               -type d \
@@ -253,12 +234,13 @@ jobs:
           fi
 
           mkdir -p "$THEOS/sdks"
-
           rm -rf "$SDK_DEST"
 
           cp -R \
             "$SDK_SOURCE" \
             "$THEOS/sdks/"
+
+          test -d "$SDK_DEST"
 
           echo ""
           echo "SDK instalado:"
@@ -274,11 +256,10 @@ jobs:
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " VALIDANDO THEOS + SDK"
+          echo " VALIDAÇÃO"
           echo "======================================"
 
           test -f "$THEOS/makefiles/common.mk"
-
           test -d "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
           echo ""
@@ -288,15 +269,6 @@ jobs:
           echo ""
           echo "SDK:"
           ls -ld "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
-
-          echo ""
-          echo "Theos SDKs:"
-          find "$THEOS/sdks" \
-            -maxdepth 1 \
-            -type d \
-            -name "*.sdk" \
-            -print \
-            | sort
 
 
       # ============================================================
@@ -330,7 +302,7 @@ jobs:
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " BUILD"
+          echo " BUILD ESP BOX"
           echo "======================================"
 
           echo ""
@@ -346,7 +318,7 @@ jobs:
           echo "$SDK_VERSION"
 
           echo ""
-          echo "Limpando build anterior..."
+          echo "Limpando..."
 
           make clean
 
@@ -395,7 +367,7 @@ jobs:
           APP_NAME="$(basename "$APP" .app)"
 
           echo ""
-          echo "APP encontrado:"
+          echo "APP:"
           echo "$APP"
 
           echo ""
@@ -437,15 +409,12 @@ jobs:
             Payload \
             "$APP_NAME.ipa"
 
-          if [ ! -s "$APP_NAME.ipa" ]; then
-            echo "::error::Falha ao criar IPA."
-            exit 1
-          fi
+          test -s "$APP_NAME.ipa"
 
           rm -rf Payload
 
           echo ""
-          echo "IPA criada:"
+          echo "IPA:"
           echo "$GITHUB_WORKSPACE/output/$APP_NAME.ipa"
 
           echo ""
@@ -463,7 +432,7 @@ jobs:
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-IPA-iOS15
+          name: ${{ env.APP_NAME }}-ESP-BOX-iOS15
           path: output/*.ipa
           if-no-files-found: error
           retention-days: 14
