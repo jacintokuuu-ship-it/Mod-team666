@@ -1,4 +1,4 @@
-name: Build LGL-Inspired
+name: Build External ESP iOS
 
 on:
   workflow_dispatch:
@@ -8,12 +8,12 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v3-buildfixed.zip
+  SOURCE_ZIP: External_ESP_Free_Fire-main.zip
   SDK_VERSION: "15.6"
 
 jobs:
   build:
-    name: Build iOS Project
+    name: Build External ESP iOS
     runs-on: macos-15
 
     steps:
@@ -53,7 +53,7 @@ jobs:
           if [ -z "$ZIP" ]; then
             echo "::error::ZIP não encontrado: $SOURCE_ZIP"
             echo ""
-            echo "Arquivos encontrados:"
+            echo "Arquivos ZIP encontrados:"
             find "$GITHUB_WORKSPACE" \
               -maxdepth 6 \
               -type f \
@@ -66,7 +66,6 @@ jobs:
           echo "$ZIP"
 
           rm -rf "$GITHUB_WORKSPACE/source"
-
           mkdir -p "$GITHUB_WORKSPACE/source"
 
           echo ""
@@ -92,7 +91,7 @@ jobs:
             echo ""
             echo "Estrutura extraída:"
             find "$GITHUB_WORKSPACE/source" \
-              -maxdepth 4 \
+              -maxdepth 5 \
               -print \
               | sort
 
@@ -120,15 +119,10 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " XCODE"
-          echo "======================================"
-
           sudo xcode-select \
             --switch \
             /Applications/Xcode.app/Contents/Developer
 
-          echo ""
           echo "Xcode:"
           xcodebuild -version
 
@@ -145,26 +139,10 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " DEPENDÊNCIAS"
-          echo "======================================"
-
-          if command -v ldid >/dev/null 2>&1; then
-            echo "ldid já está instalado."
-          else
-            echo "Instalando ldid..."
+          if ! command -v ldid >/dev/null 2>&1; then
             brew install ldid
           fi
 
-          if command -v xz >/dev/null 2>&1; then
-            echo "xz disponível."
-          fi
-
-          if command -v perl >/dev/null 2>&1; then
-            echo "perl disponível."
-          fi
-
-          echo ""
           echo "ldid:"
           command -v ldid
 
@@ -179,10 +157,6 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " THEOS"
-          echo "======================================"
-
           rm -rf "$THEOS"
 
           git clone \
@@ -191,24 +165,18 @@ jobs:
             https://github.com/theos/theos.git \
             "$THEOS"
 
-          echo ""
-          echo "Atualizando submodules..."
-
           git -C "$THEOS" \
             submodule update \
             --init \
             --recursive
 
-          echo ""
-          echo "Theos instalado."
-
           test -f "$THEOS/makefiles/common.mk"
 
-          echo ""
-          echo "Theos commit:"
-          git -C "$THEOS" rev-parse --short HEAD
-
           echo "$THEOS/bin" >> "$GITHUB_PATH"
+
+          echo ""
+          echo "Theos:"
+          git -C "$THEOS" rev-parse --short HEAD
 
 
       # ============================================================
@@ -219,15 +187,9 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " IPHONEOS SDK $SDK_VERSION"
-          echo "======================================"
-
           SDK_REPO="$GITHUB_WORKSPACE/theos-sdks"
 
           rm -rf "$SDK_REPO"
-
-          echo "Baixando Theos SDKs..."
 
           git clone \
             --depth 1 \
@@ -241,7 +203,7 @@ jobs:
             echo "::error::SDK iPhoneOS${SDK_VERSION}.sdk não encontrado."
 
             echo ""
-            echo "SDKs disponíveis no repositório:"
+            echo "SDKs disponíveis:"
             find "$SDK_REPO" \
               -maxdepth 1 \
               -type d \
@@ -273,15 +235,9 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " VALIDANDO THEOS + SDK"
-          echo "======================================"
-
           test -f "$THEOS/makefiles/common.mk"
-
           test -d "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
-          echo ""
           echo "THEOS:"
           echo "$THEOS"
 
@@ -289,18 +245,9 @@ jobs:
           echo "SDK:"
           ls -ld "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
-          echo ""
-          echo "Theos SDKs:"
-          find "$THEOS/sdks" \
-            -maxdepth 1 \
-            -type d \
-            -name "*.sdk" \
-            -print \
-            | sort
-
 
       # ============================================================
-      # MAKEFILE
+      # VALIDAR MAKEFILE
       # ============================================================
       - name: Validate Makefile
         shell: bash
@@ -308,7 +255,7 @@ jobs:
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " MAKEFILE"
+          echo " MAKEFILE DO EXTERNAL ESP"
           echo "======================================"
 
           echo ""
@@ -330,7 +277,7 @@ jobs:
           set -Eeuo pipefail
 
           echo "======================================"
-          echo " BUILD"
+          echo " BUILD EXTERNAL ESP"
           echo "======================================"
 
           echo ""
@@ -345,10 +292,7 @@ jobs:
           echo "SDK:"
           echo "$SDK_VERSION"
 
-          echo ""
-          echo "Limpando build anterior..."
-
-          make clean
+          make clean || true
 
           echo ""
           echo "Compilando..."
@@ -482,4 +426,3 @@ jobs:
             source/**/.theos/log
           if-no-files-found: ignore
           retention-days: 3
-          
