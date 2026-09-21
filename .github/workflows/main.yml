@@ -10,7 +10,7 @@ on:
 env:
   THEOS: ${{ github.workspace }}/theos
   SDK_VERSION: "15.6"
-  SOURCE_ZIP: "TROLLTHEOS-FF-arm64e-ESP-BOX-current-1-v4.zip"
+  SOURCE_ZIP: "TROLLTHEOS-FF-arm64e-ESP-BOX-current-1.zip"
 
 jobs:
   build:
