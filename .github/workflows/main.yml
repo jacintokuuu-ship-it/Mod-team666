@@ -1,611 +1,485 @@
-name: Build TrollStore TIPA
+name: Build LGL-Inspired
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
 
 permissions:
   contents: read
 
 env:
   THEOS: ${{ github.workspace }}/theos
+  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v3-buildfixed.zip
   SDK_VERSION: "15.6"
 
 jobs:
   build:
-    name: Build iOS arm64e
-    runs-on: macos-14
+    name: Build iOS Project
+    runs-on: macos-15
 
     steps:
 
       # ============================================================
-      # 1. BAIXAR O REPOSITÓRIO
+      # CHECKOUT
       # ============================================================
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
 
       # ============================================================
-      # 2. LOCALIZAR O ZIP DO PROJETO
+      # LOCALIZAR + EXTRAIR ZIP
       # ============================================================
-      - name: Locate source ZIP
+      - name: Locate and extract ZIP
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
-          echo "Arquivos do repositório:"
-          find "$GITHUB_WORKSPACE" -maxdepth 2 -type f -print
+          echo "======================================"
+          echo " LOCALIZANDO ZIP"
+          echo "======================================"
 
-          ZIP_COUNT=$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name "*.zip" | wc -l | tr -d ' ')
+          ZIP=""
 
-          if [ "$ZIP_COUNT" -eq 0 ]; then
-            echo "::error::Nenhum ZIP encontrado na raiz do repositório."
-            exit 1
+          if [ -f "$SOURCE_ZIP" ]; then
+            ZIP="$SOURCE_ZIP"
+          else
+            ZIP="$(find "$GITHUB_WORKSPACE" \
+              -maxdepth 6 \
+              -type f \
+              -name "$SOURCE_ZIP" \
+              -print \
+              -quit)"
           fi
 
-          if [ "$ZIP_COUNT" -gt 1 ]; then
-            echo "::error::Mais de um ZIP encontrado na raiz."
-            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name "*.zip"
-            exit 1
-          fi
-
-          SOURCE_ZIP=$(find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -name "*.zip" | head -n 1)
-
-          echo "ZIP encontrado:"
-          echo "$SOURCE_ZIP"
-
-          echo "SOURCE_ZIP=$SOURCE_ZIP" >> "$GITHUB_ENV"
-
-      # ============================================================
-      # 3. EXTRAIR PROJETO
-      # ============================================================
-      - name: Extract project
-        shell: bash
-        run: |
-          set -e
-
-          rm -rf "$GITHUB_WORKSPACE/project"
-
-          mkdir -p "$GITHUB_WORKSPACE/project"
-
-          unzip -q "$SOURCE_ZIP" \
-            -d "$GITHUB_WORKSPACE/project"
-
-          echo "Conteúdo extraído:"
-          find "$GITHUB_WORKSPACE/project" -maxdepth 4 -print
-
-      # ============================================================
-      # 4. LOCALIZAR MAKEFILE
-      # ============================================================
-      - name: Locate Theos project
-        shell: bash
-        run: |
-          set -e
-
-          MAKEFILE=$(find "$GITHUB_WORKSPACE/project" \
-            -type f \
-            -name "Makefile" \
-            -print -quit)
-
-          if [ -z "$MAKEFILE" ]; then
-            echo "::error::Makefile não encontrado dentro do ZIP."
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$MAKEFILE")
-
-          echo "Makefile:"
-          echo "$MAKEFILE"
-
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      # ============================================================
-      # 5. MOSTRAR ESTRUTURA DO PROJETO
-      # ============================================================
-      - name: Inspect project
-        shell: bash
-        run: |
-          set -e
-
-          echo "PROJECT_DIR:"
-          echo "$PROJECT_DIR"
-
-          echo
-          echo "Estrutura:"
-          find "$PROJECT_DIR" -maxdepth 5 -print
-
-      # ============================================================
-      # 6. INSTALAR DEPENDÊNCIAS
-      # ============================================================
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -e
-
-          brew update
-
-          brew install ldid xz
-
-          echo
-          echo "ldid:"
-          ldid -h >/dev/null 2>&1 || true
-
-      # ============================================================
-      # 7. INSTALAR THEOS
-      # ============================================================
-      - name: Install Theos
-        shell: bash
-        run: |
-          set -e
-
-          rm -rf "$THEOS"
-
-          git clone --recursive \
-            https://github.com/theos/theos.git \
-            "$THEOS"
-
-          echo "Theos instalado em:"
-          echo "$THEOS"
-
-      # ============================================================
-      # 8. BAIXAR REPOSITÓRIO DE SDKs
-      # ============================================================
-      - name: Download Theos SDK repository
-        shell: bash
-        run: |
-          set -e
-
-          rm -rf "$GITHUB_WORKSPACE/theos-sdks"
-
-          git clone \
-            https://github.com/theos/sdks.git \
-            "$GITHUB_WORKSPACE/theos-sdks"
-
-      # ============================================================
-      # 9. INSTALAR SDK 15.6
-      # ============================================================
-      - name: Install iPhoneOS 15.6 SDK
-        shell: bash
-        run: |
-          set -e
-
-          SDK_SOURCE="$GITHUB_WORKSPACE/theos-sdks/iPhoneOS15.6.sdk"
-          SDK_DEST="$THEOS/sdks/iPhoneOS15.6.sdk"
-
-          if [ ! -d "$SDK_SOURCE" ]; then
-            echo "::error::iPhoneOS15.6.sdk não encontrado no repositório de SDKs."
-            echo "SDKs disponíveis:"
-            find "$GITHUB_WORKSPACE/theos-sdks" \
-              -maxdepth 1 \
-              -type d \
-              -name "iPhoneOS*.sdk" \
+          if [ -z "$ZIP" ]; then
+            echo "::error::ZIP não encontrado: $SOURCE_ZIP"
+            echo ""
+            echo "Arquivos encontrados:"
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 6 \
+              -type f \
+              -name "*.zip" \
               -print
             exit 1
           fi
 
+          echo "ZIP encontrado:"
+          echo "$ZIP"
+
+          rm -rf "$GITHUB_WORKSPACE/source"
+
+          mkdir -p "$GITHUB_WORKSPACE/source"
+
+          echo ""
+          echo "Extraindo ZIP..."
+
+          unzip -q "$ZIP" \
+            -d "$GITHUB_WORKSPACE/source"
+
+          echo ""
+          echo "Procurando Makefile..."
+
+          APP_MAKEFILE="$(
+            find "$GITHUB_WORKSPACE/source" \
+              -type f \
+              -name "Makefile" \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$APP_MAKEFILE" ]; then
+            echo "::error::Makefile não encontrado dentro do ZIP."
+
+            echo ""
+            echo "Estrutura extraída:"
+            find "$GITHUB_WORKSPACE/source" \
+              -maxdepth 4 \
+              -print \
+              | sort
+
+            exit 1
+          fi
+
+          APP_DIR="$(dirname "$APP_MAKEFILE")"
+
+          echo ""
+          echo "Makefile encontrado:"
+          echo "$APP_MAKEFILE"
+
+          echo ""
+          echo "Diretório do projeto:"
+          echo "$APP_DIR"
+
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+
+
+      # ============================================================
+      # XCODE
+      # ============================================================
+      - name: Configure Xcode
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " XCODE"
+          echo "======================================"
+
+          sudo xcode-select \
+            --switch \
+            /Applications/Xcode.app/Contents/Developer
+
+          echo ""
+          echo "Xcode:"
+          xcodebuild -version
+
+          echo ""
+          echo "SDKs disponíveis:"
+          xcodebuild -showsdks
+
+
+      # ============================================================
+      # DEPENDÊNCIAS
+      # ============================================================
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " DEPENDÊNCIAS"
+          echo "======================================"
+
+          if command -v ldid >/dev/null 2>&1; then
+            echo "ldid já está instalado."
+          else
+            echo "Instalando ldid..."
+            brew install ldid
+          fi
+
+          if command -v xz >/dev/null 2>&1; then
+            echo "xz disponível."
+          fi
+
+          if command -v perl >/dev/null 2>&1; then
+            echo "perl disponível."
+          fi
+
+          echo ""
+          echo "ldid:"
+          command -v ldid
+
+          ldid -V || true
+
+
+      # ============================================================
+      # THEOS
+      # ============================================================
+      - name: Install Theos
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " THEOS"
+          echo "======================================"
+
+          rm -rf "$THEOS"
+
+          git clone \
+            --recursive \
+            --depth 1 \
+            https://github.com/theos/theos.git \
+            "$THEOS"
+
+          echo ""
+          echo "Atualizando submodules..."
+
+          git -C "$THEOS" \
+            submodule update \
+            --init \
+            --recursive
+
+          echo ""
+          echo "Theos instalado."
+
+          test -f "$THEOS/makefiles/common.mk"
+
+          echo ""
+          echo "Theos commit:"
+          git -C "$THEOS" rev-parse --short HEAD
+
+          echo "$THEOS/bin" >> "$GITHUB_PATH"
+
+
+      # ============================================================
+      # SDK
+      # ============================================================
+      - name: Install iPhoneOS SDK
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "======================================"
+          echo " IPHONEOS SDK $SDK_VERSION"
+          echo "======================================"
+
+          SDK_REPO="$GITHUB_WORKSPACE/theos-sdks"
+
+          rm -rf "$SDK_REPO"
+
+          echo "Baixando Theos SDKs..."
+
+          git clone \
+            --depth 1 \
+            https://github.com/theos/sdks.git \
+            "$SDK_REPO"
+
+          SDK_SOURCE="$SDK_REPO/iPhoneOS${SDK_VERSION}.sdk"
+          SDK_DEST="$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+
+          if [ ! -d "$SDK_SOURCE" ]; then
+            echo "::error::SDK iPhoneOS${SDK_VERSION}.sdk não encontrado."
+
+            echo ""
+            echo "SDKs disponíveis no repositório:"
+            find "$SDK_REPO" \
+              -maxdepth 1 \
+              -type d \
+              -name "iPhoneOS*.sdk" \
+              -print \
+              | sort
+
+            exit 1
+          fi
+
+          mkdir -p "$THEOS/sdks"
+
           rm -rf "$SDK_DEST"
 
-          cp -R "$SDK_SOURCE" "$SDK_DEST"
+          cp -R \
+            "$SDK_SOURCE" \
+            "$THEOS/sdks/"
 
-          echo
+          echo ""
           echo "SDK instalado:"
           ls -ld "$SDK_DEST"
 
+
       # ============================================================
-      # 10. VALIDAR SDK
+      # VALIDAR THEOS + SDK
       # ============================================================
-      - name: Validate SDK
+      - name: Validate Theos and SDK
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
-          SDK="$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+          echo "======================================"
+          echo " VALIDANDO THEOS + SDK"
+          echo "======================================"
 
-          if [ ! -d "$SDK" ]; then
-            echo "::error::SDK não existe: $SDK"
-            exit 1
-          fi
+          test -f "$THEOS/makefiles/common.mk"
 
-          echo "SDK encontrado:"
-          echo "$SDK"
+          test -d "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
-          echo
-          echo "SDKs disponíveis:"
+          echo ""
+          echo "THEOS:"
+          echo "$THEOS"
+
+          echo ""
+          echo "SDK:"
+          ls -ld "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+
+          echo ""
+          echo "Theos SDKs:"
           find "$THEOS/sdks" \
             -maxdepth 1 \
             -type d \
-            -name "iPhoneOS*.sdk" \
-            -print
+            -name "*.sdk" \
+            -print \
+            | sort
+
 
       # ============================================================
-      # 11. CORRIGIR SDK ANTIGO NO MAKEFILE
+      # MAKEFILE
       # ============================================================
-      - name: Normalize Makefile SDK
+      - name: Validate Makefile
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
-          cd "$PROJECT_DIR"
+          echo "======================================"
+          echo " MAKEFILE"
+          echo "======================================"
 
-          echo "Makefile antes:"
-          grep -n "TARGET" Makefile || true
+          echo ""
+          echo "Projeto:"
+          echo "$APP_DIR"
 
-          sed -i '' \
-            's/iphone:clang:[0-9][0-9.]*:/iphone:clang:15.6:/g' \
-            Makefile
+          echo ""
+          echo "Makefile:"
+          cat "$APP_DIR/Makefile"
 
-          echo
-          echo "Makefile depois:"
-          grep -n "TARGET" Makefile || true
 
       # ============================================================
-      # 12. VERIFICAR INFO.PLIST DO PROJETO
+      # COMPILAR
       # ============================================================
-      - name: Validate source Info.plist
+      - name: Compile project
+        working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
-          INFO_PLIST=$(find "$PROJECT_DIR" \
-            -type f \
-            -path "*/layout/*.app/Info.plist" \
-            -print -quit)
+          echo "======================================"
+          echo " BUILD"
+          echo "======================================"
 
-          if [ -z "$INFO_PLIST" ]; then
-            INFO_PLIST=$(find "$PROJECT_DIR" \
-              -type f \
-              -name "Info.plist" \
-              -print -quit)
-          fi
+          echo ""
+          echo "Diretório:"
+          pwd
 
-          if [ -z "$INFO_PLIST" ]; then
-            echo "::error::Info.plist não encontrado."
-            exit 1
-          fi
+          echo ""
+          echo "THEOS:"
+          echo "$THEOS"
 
-          echo "Info.plist encontrado:"
-          echo "$INFO_PLIST"
+          echo ""
+          echo "SDK:"
+          echo "$SDK_VERSION"
 
-          plutil -lint "$INFO_PLIST"
+          echo ""
+          echo "Limpando build anterior..."
 
-          echo
-          echo "Bundle executable:"
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleExecutable" \
-            "$INFO_PLIST" || true
+          make clean
 
-          echo
-          echo "Bundle identifier:"
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleIdentifier" \
-            "$INFO_PLIST" || true
-
-          echo "INFO_PLIST=$INFO_PLIST" >> "$GITHUB_ENV"
-
-      # ============================================================
-      # 13. LIMPAR BUILD ANTERIOR
-      # ============================================================
-      - name: Clean project
-        shell: bash
-        run: |
-          set -e
-
-          cd "$PROJECT_DIR"
-
-          make clean \
-            SDKVERSION="$SDK_VERSION" \
-            THEOS="$THEOS"
-
-      # ============================================================
-      # 14. COMPILAR
-      # ============================================================
-      - name: Build project
-        shell: bash
-        run: |
-          set -e
-
-          cd "$PROJECT_DIR"
+          echo ""
+          echo "Compilando..."
 
           make all \
             SDKVERSION="$SDK_VERSION" \
-            THEOS="$THEOS" \
-            FINALPACKAGE=1 \
             messages=yes
 
+
       # ============================================================
-      # 15. LOCALIZAR APP COMPILADO
+      # LOCALIZAR APP
       # ============================================================
-      - name: Locate compiled app
+      - name: Locate generated APP
+        working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
-          echo "Procurando .app compilado..."
+          echo "======================================"
+          echo " LOCALIZANDO APP"
+          echo "======================================"
 
-          APP=$(find "$PROJECT_DIR/.theos/obj" \
-            -type d \
-            -name "*.app" \
-            -print \
-            | head -n 1)
+          APP="$(
+            find "$PWD/.theos/obj" \
+              -type d \
+              -name "*.app" \
+              -print \
+              | head -n 1
+          )"
 
           if [ -z "$APP" ]; then
-            echo "::error::Nenhum .app compilado foi encontrado."
-            echo
-            echo "Conteúdo de .theos:"
-            find "$PROJECT_DIR/.theos" -maxdepth 6 -print || true
+            echo "::error::Nenhum .app foi gerado."
+
+            echo ""
+            echo "Conteúdo de .theos/obj:"
+            find "$PWD/.theos/obj" \
+              -maxdepth 8 \
+              -print \
+              | sort
+
             exit 1
           fi
 
+          APP_NAME="$(basename "$APP" .app)"
+
+          echo ""
           echo "APP encontrado:"
           echo "$APP"
 
-          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
-
-      # ============================================================
-      # 16. IDENTIFICAR NOME DO APP
-      # ============================================================
-      - name: Identify application
-        shell: bash
-        run: |
-          set -e
-
-          APP_NAME=$(basename "$APP_PATH")
-
-          if [ -z "$APP_NAME" ]; then
-            echo "::error::Não foi possível identificar o nome do APP."
-            exit 1
-          fi
-
-          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
-
-          echo "Aplicativo:"
+          echo ""
+          echo "Nome:"
           echo "$APP_NAME"
 
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
+
+
       # ============================================================
-      # 17. CRIAR ESTRUTURA TROLLSTORE
+      # CRIAR IPA
       # ============================================================
-      - name: Prepare TrollStore package
+      - name: Create IPA
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
-          rm -rf "$GITHUB_WORKSPACE/trollstore-stage"
-          rm -rf "$GITHUB_WORKSPACE/trollstore-out"
+          echo "======================================"
+          echo " CRIANDO IPA"
+          echo "======================================"
+
+          rm -rf "$GITHUB_WORKSPACE/output"
 
           mkdir -p \
-            "$GITHUB_WORKSPACE/trollstore-stage/Payload" \
-            "$GITHUB_WORKSPACE/trollstore-out"
+            "$GITHUB_WORKSPACE/output/Payload"
 
           cp -R \
             "$APP_PATH" \
-            "$GITHUB_WORKSPACE/trollstore-stage/Payload/$APP_NAME"
+            "$GITHUB_WORKSPACE/output/Payload/$APP_NAME.app"
 
-      # ============================================================
-      # 18. GARANTIR INFOPLIST DENTRO DO APP
-      # ============================================================
-      - name: Repair final Info.plist
-        shell: bash
-        run: |
-          set -e
+          cd "$GITHUB_WORKSPACE/output"
 
-          FINAL_APP="$GITHUB_WORKSPACE/trollstore-stage/Payload/$APP_NAME"
-          FINAL_INFO="$FINAL_APP/Info.plist"
+          /usr/bin/ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
+            Payload \
+            "$APP_NAME.ipa"
 
-          if [ ! -f "$FINAL_INFO" ]; then
-            echo "Info.plist não está dentro do APP compilado."
-
-            SOURCE_INFO="$INFO_PLIST"
-
-            if [ ! -f "$SOURCE_INFO" ]; then
-              echo "::error::Info.plist de origem também não encontrado."
-              exit 1
-            fi
-
-            cp "$SOURCE_INFO" "$FINAL_INFO"
-          fi
-
-          if [ ! -f "$FINAL_INFO" ]; then
-            echo "::error::Não foi possível criar Info.plist final."
+          if [ ! -s "$APP_NAME.ipa" ]; then
+            echo "::error::Falha ao criar IPA."
             exit 1
           fi
 
-          plutil -lint "$FINAL_INFO"
+          rm -rf Payload
 
-          echo
-          echo "Info.plist final:"
-          ls -lh "$FINAL_INFO"
+          echo ""
+          echo "IPA criada:"
+          echo "$GITHUB_WORKSPACE/output/$APP_NAME.ipa"
 
-      # ============================================================
-      # 19. VALIDAR EXECUTÁVEL
-      # ============================================================
-      - name: Validate application executable
-        shell: bash
-        run: |
-          set -e
+          echo ""
+          echo "Tamanho:"
+          ls -lh "$APP_NAME.ipa"
 
-          FINAL_APP="$GITHUB_WORKSPACE/trollstore-stage/Payload/$APP_NAME"
+          echo ""
+          echo "SHA256:"
+          shasum -a 256 "$APP_NAME.ipa"
 
-          EXECUTABLE=$(
-            /usr/libexec/PlistBuddy \
-              -c "Print :CFBundleExecutable" \
-              "$FINAL_APP/Info.plist"
-          )
-
-          if [ -z "$EXECUTABLE" ]; then
-            echo "::error::CFBundleExecutable não encontrado."
-            exit 1
-          fi
-
-          echo "Executável declarado:"
-          echo "$EXECUTABLE"
-
-          if [ ! -f "$FINAL_APP/$EXECUTABLE" ]; then
-            echo "::error::Executável não encontrado dentro do APP:"
-            echo "$FINAL_APP/$EXECUTABLE"
-            exit 1
-          fi
-
-          echo
-          echo "Executável encontrado:"
-          ls -lh "$FINAL_APP/$EXECUTABLE"
 
       # ============================================================
-      # 20. VALIDAR BUNDLE
+      # UPLOAD IPA
       # ============================================================
-      - name: Validate final bundle
-        shell: bash
-        run: |
-          set -e
-
-          FINAL_APP="$GITHUB_WORKSPACE/trollstore-stage/Payload/$APP_NAME"
-
-          echo "Bundle final:"
-          find "$FINAL_APP" -maxdepth 3 -print
-
-          test -f "$FINAL_APP/Info.plist"
-
-          APP_COUNT=$(
-            find "$GITHUB_WORKSPACE/trollstore-stage/Payload" \
-              -maxdepth 1 \
-              -type d \
-              -name "*.app" \
-              | wc -l \
-              | tr -d ' '
-          )
-
-          if [ "$APP_COUNT" -ne 1 ]; then
-            echo "::error::Payload deve conter exatamente um .app."
-            exit 1
-          fi
-
-          echo "Bundle validado."
-
-      # ============================================================
-      # 21. CRIAR TIPA TROLLSTORE
-      # ============================================================
-      - name: Create TrollStore TIPA
-        shell: bash
-        run: |
-          set -e
-
-          cd "$GITHUB_WORKSPACE/trollstore-stage"
-
-          OUTPUT="$GITHUB_WORKSPACE/trollstore-out/${APP_NAME%.app}-TrollStore.tipa"
-
-          rm -f "$OUTPUT"
-
-          zip -qry \
-            "$OUTPUT" \
-            Payload
-
-          echo
-          echo "TIPA criada:"
-          ls -lh "$OUTPUT"
-
-          echo "TIPA_PATH=$OUTPUT" >> "$GITHUB_ENV"
-
-      # ============================================================
-      # 22. VERIFICAR TIPA
-      # ============================================================
-      - name: Verify TIPA
-        shell: bash
-        run: |
-          set -e
-
-          TEST_DIR="$GITHUB_WORKSPACE/tipa-test"
-
-          rm -rf "$TEST_DIR"
-
-          mkdir -p "$TEST_DIR"
-
-          unzip -q \
-            "$TIPA_PATH" \
-            -d "$TEST_DIR"
-
-          echo "Conteúdo da TIPA:"
-          find "$TEST_DIR" -maxdepth 4 -print
-
-          if [ ! -d "$TEST_DIR/Payload" ]; then
-            echo "::error::Payload não encontrado na TIPA."
-            exit 1
-          fi
-
-          APP_COUNT=$(
-            find "$TEST_DIR/Payload" \
-              -maxdepth 1 \
-              -type d \
-              -name "*.app" \
-              | wc -l \
-              | tr -d ' '
-          )
-
-          if [ "$APP_COUNT" -ne 1 ]; then
-            echo "::error::A TIPA não contém exatamente um .app."
-            exit 1
-          fi
-
-          FINAL_APP=$(find "$TEST_DIR/Payload" \
-            -maxdepth 1 \
-            -type d \
-            -name "*.app" \
-            -print \
-            -quit)
-
-          if [ ! -f "$FINAL_APP/Info.plist" ]; then
-            echo "::error::Info.plist ausente dentro do APP da TIPA."
-            exit 1
-          fi
-
-          plutil -lint "$FINAL_APP/Info.plist"
-
-          EXECUTABLE=$(
-            /usr/libexec/PlistBuddy \
-              -c "Print :CFBundleExecutable" \
-              "$FINAL_APP/Info.plist"
-          )
-
-          if [ ! -f "$FINAL_APP/$EXECUTABLE" ]; then
-            echo "::error::Executável declarado não existe."
-            exit 1
-          fi
-
-          echo
-          echo "======================================"
-          echo " TIPA VALIDADA COM SUCESSO"
-          echo "======================================"
-          echo
-          echo "APP:"
-          echo "$FINAL_APP"
-          echo
-          echo "Info.plist:"
-          echo "$FINAL_APP/Info.plist"
-          echo
-          echo "Executável:"
-          echo "$FINAL_APP/$EXECUTABLE"
-
-      # ============================================================
-      # 23. PUBLICAR ARTIFATO
-      # ============================================================
-      - name: Upload TrollStore TIPA
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TrollStore-TIPA-VERIFIED
-          path: |
-            ${{ env.TIPA_PATH }}
+          name: ${{ env.APP_NAME }}-IPA-iOS15
+          path: output/*.ipa
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
+
 
       # ============================================================
-      # 24. PUBLICAR LOGS DO BUILD
+      # DIAGNÓSTICOS
       # ============================================================
-      - name: Upload build logs
+      - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Build-Logs
+          name: ${{ env.APP_NAME }}-build-diagnostics
           path: |
-            ${{ env.PROJECT_DIR }}/.theos
+            source/**/.theos/obj
+            source/**/.theos/log
           if-no-files-found: ignore
           retention-days: 3
+          
