@@ -9,7 +9,8 @@ permissions:
 env:
   THEOS: ${{ github.workspace }}/theos
   SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v3-buildfixed.zip
-  SDK_VERSION: "15.6"
+  SDK_VERSION: "16.5"
+  MIN_IOS: "14.0"
 
 jobs:
   build:
@@ -26,89 +27,92 @@ jobs:
 
 
       # ============================================================
-      # LOCALIZAR + EXTRAIR ZIP
+      # LOCALIZAR E EXTRAIR ZIP
       # ============================================================
       - name: Locate and extract ZIP
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " LOCALIZANDO ZIP"
-          echo "======================================"
+          echo "=============================================="
+          echo " LOCALIZANDO PROJETO"
+          echo "=============================================="
 
-          ZIP=""
+          ZIP_PATH=""
 
-          if [ -f "$SOURCE_ZIP" ]; then
-            ZIP="$SOURCE_ZIP"
+          if [ -f "$GITHUB_WORKSPACE/$SOURCE_ZIP" ]; then
+            ZIP_PATH="$GITHUB_WORKSPACE/$SOURCE_ZIP"
           else
-            ZIP="$(find "$GITHUB_WORKSPACE" \
-              -maxdepth 6 \
-              -type f \
-              -name "$SOURCE_ZIP" \
-              -print \
-              -quit)"
+            ZIP_PATH="$(
+              find "$GITHUB_WORKSPACE" \
+                -type f \
+                -name "$SOURCE_ZIP" \
+                -print \
+                -quit
+            )"
           fi
 
-          if [ -z "$ZIP" ]; then
+          if [ -z "$ZIP_PATH" ]; then
             echo "::error::ZIP não encontrado: $SOURCE_ZIP"
             echo ""
-            echo "Arquivos ZIP encontrados:"
+            echo "ZIPs encontrados no repositório:"
             find "$GITHUB_WORKSPACE" \
-              -maxdepth 6 \
               -type f \
-              -name "*.zip" \
-              -print
+              -iname "*.zip" \
+              -print \
+              | sort
             exit 1
           fi
 
           echo "ZIP encontrado:"
-          echo "$ZIP"
+          echo "$ZIP_PATH"
 
           rm -rf "$GITHUB_WORKSPACE/source"
+
           mkdir -p "$GITHUB_WORKSPACE/source"
 
           echo ""
-          echo "Extraindo ZIP..."
+          echo "Extraindo..."
 
-          unzip -q "$ZIP" \
+          unzip -q \
+            "$ZIP_PATH" \
             -d "$GITHUB_WORKSPACE/source"
 
           echo ""
-          echo "Procurando Makefile..."
+          echo "Procurando makefile..."
 
-          APP_MAKEFILE="$(
+          PROJECT_MAKEFILE="$(
             find "$GITHUB_WORKSPACE/source" \
               -type f \
-              -name "Makefile" \
+              \( -iname "Makefile" -o -iname "makefile" \) \
               -print \
               -quit
           )"
 
-          if [ -z "$APP_MAKEFILE" ]; then
-            echo "::error::Makefile não encontrado dentro do ZIP."
+          if [ -z "$PROJECT_MAKEFILE" ]; then
+            echo "::error::Nenhum Makefile/makefile encontrado."
 
             echo ""
-            echo "Estrutura extraída:"
+            echo "Estrutura encontrada:"
             find "$GITHUB_WORKSPACE/source" \
-              -maxdepth 5 \
+              -maxdepth 6 \
               -print \
               | sort
 
             exit 1
           fi
 
-          APP_DIR="$(dirname "$APP_MAKEFILE")"
+          PROJECT_DIR="$(dirname "$PROJECT_MAKEFILE")"
 
           echo ""
-          echo "Makefile encontrado:"
-          echo "$APP_MAKEFILE"
+          echo "Makefile:"
+          echo "$PROJECT_MAKEFILE"
 
           echo ""
-          echo "Diretório do projeto:"
-          echo "$APP_DIR"
+          echo "Diretório:"
+          echo "$PROJECT_DIR"
 
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "APP_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
 
       # ============================================================
@@ -119,15 +123,20 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          sudo xcode-select \
-            --switch \
-            /Applications/Xcode.app/Contents/Developer
+          echo "=============================================="
+          echo " XCODE"
+          echo "=============================================="
 
-          echo "Xcode:"
+          echo ""
+          echo "Xcode selecionado:"
+          xcode-select -p
+
+          echo ""
+          echo "Versão:"
           xcodebuild -version
 
           echo ""
-          echo "SDKs disponíveis:"
+          echo "SDKs oficiais disponíveis:"
           xcodebuild -showsdks
 
 
@@ -139,13 +148,23 @@ jobs:
         run: |
           set -Eeuo pipefail
 
+          echo "=============================================="
+          echo " DEPENDÊNCIAS"
+          echo "=============================================="
+
           if ! command -v ldid >/dev/null 2>&1; then
+            echo "Instalando ldid..."
             brew install ldid
+          else
+            echo "ldid já instalado."
           fi
 
+          echo ""
           echo "ldid:"
           command -v ldid
 
+          echo ""
+          echo "Versão:"
           ldid -V || true
 
 
@@ -156,6 +175,10 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          echo "=============================================="
+          echo " THEOS"
+          echo "=============================================="
 
           rm -rf "$THEOS"
 
@@ -170,22 +193,33 @@ jobs:
             --init \
             --recursive
 
-          test -f "$THEOS/makefiles/common.mk"
+          if [ ! -f "$THEOS/makefiles/common.mk" ]; then
+            echo "::error::Theos não foi instalado corretamente."
+            exit 1
+          fi
 
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
           echo ""
-          echo "Theos:"
+          echo "Theos instalado em:"
+          echo "$THEOS"
+
+          echo ""
+          echo "Commit:"
           git -C "$THEOS" rev-parse --short HEAD
 
 
       # ============================================================
-      # SDK
+      # SDK 16.5
       # ============================================================
-      - name: Install iPhoneOS SDK
+      - name: Install iPhoneOS SDK 16.5
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          echo "=============================================="
+          echo " IPHONEOS SDK $SDK_VERSION"
+          echo "=============================================="
 
           SDK_REPO="$GITHUB_WORKSPACE/theos-sdks"
 
@@ -203,7 +237,7 @@ jobs:
             echo "::error::SDK iPhoneOS${SDK_VERSION}.sdk não encontrado."
 
             echo ""
-            echo "SDKs disponíveis:"
+            echo "SDKs disponíveis no repositório:"
             find "$SDK_REPO" \
               -maxdepth 1 \
               -type d \
@@ -222,6 +256,11 @@ jobs:
             "$SDK_SOURCE" \
             "$THEOS/sdks/"
 
+          if [ ! -d "$SDK_DEST" ]; then
+            echo "::error::Falha ao copiar SDK."
+            exit 1
+          fi
+
           echo ""
           echo "SDK instalado:"
           ls -ld "$SDK_DEST"
@@ -235,53 +274,71 @@ jobs:
         run: |
           set -Eeuo pipefail
 
+          echo "=============================================="
+          echo " VALIDAÇÃO"
+          echo "=============================================="
+
           test -f "$THEOS/makefiles/common.mk"
+          test -f "$THEOS/makefiles/application.mk"
           test -d "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
+          echo ""
           echo "THEOS:"
           echo "$THEOS"
 
           echo ""
           echo "SDK:"
-          ls -ld "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
+          ls -ld \
+            "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
 
       # ============================================================
-      # VALIDAR MAKEFILE
+      # VALIDAR PROJETO
       # ============================================================
-      - name: Validate Makefile
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          echo "======================================"
-          echo " MAKEFILE DO EXTERNAL ESP"
-          echo "======================================"
-
-          echo ""
-          echo "Projeto:"
-          echo "$APP_DIR"
-
-          echo ""
-          echo "Makefile:"
-          cat "$APP_DIR/Makefile"
-
-
-      # ============================================================
-      # COMPILAR
-      # ============================================================
-      - name: Compile project
+      - name: Validate project
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " BUILD EXTERNAL ESP"
-          echo "======================================"
+          echo "=============================================="
+          echo " PROJETO"
+          echo "=============================================="
 
           echo ""
           echo "Diretório:"
+          pwd
+
+          echo ""
+          echo "Arquivos principais:"
+          find . \
+            -maxdepth 3 \
+            -type f \
+            | sort
+
+          echo ""
+          echo "=============================================="
+          echo " MAKEFILE"
+          echo "=============================================="
+
+          cat makefile
+
+
+      # ============================================================
+      # COMPILAR + EMPACOTAR
+      # ============================================================
+      - name: Build project
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "=============================================="
+          echo " BUILD"
+          echo "=============================================="
+
+          echo ""
+          echo "Projeto:"
           pwd
 
           echo ""
@@ -292,62 +349,76 @@ jobs:
           echo "SDK:"
           echo "$SDK_VERSION"
 
+          echo ""
+          echo "iOS mínimo:"
+          echo "$MIN_IOS"
+
+          echo ""
+          echo "Limpando build anterior..."
+
           make clean || true
 
           echo ""
-          echo "Compilando..."
+          echo "Compilando e empacotando..."
 
-          make all \
+          make package \
             SDKVERSION="$SDK_VERSION" \
-            messages=yes
+            FINALPACKAGE=1 \
+            DEBUG=0 \
+            messages=yes \
+            2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+          echo ""
+          echo "Build finalizado."
 
 
       # ============================================================
-      # LOCALIZAR APP
+      # LOCALIZAR TIPA
       # ============================================================
-      - name: Locate generated APP
+      - name: Locate TIPA
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
-          echo " LOCALIZANDO APP"
-          echo "======================================"
+          echo "=============================================="
+          echo " PROCURANDO TIPA"
+          echo "=============================================="
 
-          APP="$(
-            find "$PWD/.theos/obj" \
-              -type d \
-              -name "*.app" \
+          TIPA="$(
+            find "$PWD/packages" \
+              -maxdepth 1 \
+              -type f \
+              -name "*.tipa" \
               -print \
-              | head -n 1
+              -quit
           )"
 
-          if [ -z "$APP" ]; then
-            echo "::error::Nenhum .app foi gerado."
+          if [ -z "$TIPA" ]; then
+            echo "::error::Nenhum .tipa foi gerado."
 
             echo ""
-            echo "Conteúdo de .theos/obj:"
-            find "$PWD/.theos/obj" \
-              -maxdepth 8 \
+            echo "Conteúdo do projeto:"
+            find "$PWD" \
+              -maxdepth 5 \
               -print \
               | sort
 
             exit 1
           fi
 
-          APP_NAME="$(basename "$APP" .app)"
+          TIPA_NAME="$(basename "$TIPA")"
 
           echo ""
-          echo "APP encontrado:"
-          echo "$APP"
+          echo "TIPA encontrado:"
+          echo "$TIPA"
 
           echo ""
           echo "Nome:"
-          echo "$APP_NAME"
+          echo "$TIPA_NAME"
 
-          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
-          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
+          echo "TIPA_PATH=$TIPA" >> "$GITHUB_ENV"
+          echo "TIPA_NAME=$TIPA_NAME" >> "$GITHUB_ENV"
 
 
       # ============================================================
@@ -358,17 +429,64 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          echo "======================================"
+          echo "=============================================="
           echo " CRIANDO IPA"
-          echo "======================================"
+          echo "=============================================="
 
+          rm -rf "$GITHUB_WORKSPACE/ipa_extract"
           rm -rf "$GITHUB_WORKSPACE/output"
+
+          mkdir -p \
+            "$GITHUB_WORKSPACE/ipa_extract" \
+            "$GITHUB_WORKSPACE/output"
+
+          echo ""
+          echo "Extraindo TIPA..."
+
+          unzip -q \
+            "$TIPA_PATH" \
+            -d "$GITHUB_WORKSPACE/ipa_extract"
+
+          if [ ! -d "$GITHUB_WORKSPACE/ipa_extract/Payload" ]; then
+            echo "::error::TIPA não contém Payload."
+            exit 1
+          fi
+
+          APP="$(
+            find "$GITHUB_WORKSPACE/ipa_extract/Payload" \
+              -maxdepth 1 \
+              -type d \
+              -name "*.app" \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$APP" ]; then
+            echo "::error::Nenhum .app encontrado dentro do TIPA."
+            exit 1
+          fi
+
+          APP_NAME="$(basename "$APP" .app)"
+
+          echo ""
+          echo "APP:"
+          echo "$APP"
+
+          echo ""
+          echo "Nome:"
+          echo "$APP_NAME"
+
+          echo ""
+          echo "Criando IPA..."
+
+          rm -rf \
+            "$GITHUB_WORKSPACE/output/Payload"
 
           mkdir -p \
             "$GITHUB_WORKSPACE/output/Payload"
 
           cp -R \
-            "$APP_PATH" \
+            "$APP" \
             "$GITHUB_WORKSPACE/output/Payload/$APP_NAME.app"
 
           cd "$GITHUB_WORKSPACE/output"
@@ -382,11 +500,9 @@ jobs:
             "$APP_NAME.ipa"
 
           if [ ! -s "$APP_NAME.ipa" ]; then
-            echo "::error::Falha ao criar IPA."
+            echo "::error::IPA não foi criada."
             exit 1
           fi
-
-          rm -rf Payload
 
           echo ""
           echo "IPA criada:"
@@ -400,29 +516,42 @@ jobs:
           echo "SHA256:"
           shasum -a 256 "$APP_NAME.ipa"
 
+          echo ""
+          echo "TIPA original:"
+          cp \
+            "$TIPA_PATH" \
+            "$GITHUB_WORKSPACE/output/$TIPA_NAME"
+
+          echo ""
+          echo "Arquivos finais:"
+          ls -lh "$GITHUB_WORKSPACE/output"
+
 
       # ============================================================
-      # UPLOAD IPA
+      # UPLOAD IPA + TIPA
       # ============================================================
-      - name: Upload IPA Artifact
+      - name: Upload IPA and TIPA
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-IPA-iOS15
-          path: output/*.ipa
+          name: External-ESP-iOS-Build
+          path: |
+            output/*.ipa
+            output/*.tipa
           if-no-files-found: error
           retention-days: 14
 
 
       # ============================================================
-      # DIAGNÓSTICOS
+      # UPLOAD LOGS
       # ============================================================
-      - name: Upload build diagnostics
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-build-diagnostics
+          name: External-ESP-build-log
           path: |
-            source/**/.theos/obj
-            source/**/.theos/log
+            build.log
+            source/**/.theos/log/**
+            source/**/.theos/obj/**
           if-no-files-found: ignore
-          retention-days: 3
+          retention-days: 7
