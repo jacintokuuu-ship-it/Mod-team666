@@ -8,16 +8,7 @@ permissions:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v3-buildfixed.zip
-
-  # ============================================================
-  # CONFIGURAÇÃO DO PROJETO
-  # ============================================================
-  # O projeto original utiliza iPhoneOS16.5.sdk.
-  # Deployment mínimo permanece em iOS 15.0.
-  # ============================================================
-  SDK_VERSION: "16.5"
-  MIN_IOS: "15.0"
+  SOURCE_ZIP: External_ESP_Free_Fire-main.zip
 
 jobs:
 
@@ -35,9 +26,9 @@ jobs:
 
 
       # ==========================================================
-      # LOCALIZAR E EXTRAIR ZIP
+      # LOCALIZAR E EXTRAIR PROJETO
       # ==========================================================
-      - name: Locate and extract ZIP
+      - name: Locate and extract project
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -46,25 +37,14 @@ jobs:
           echo " LOCALIZANDO PROJETO"
           echo "=============================================="
 
-          ZIP_PATH=""
+          ZIP_PATH="$GITHUB_WORKSPACE/$SOURCE_ZIP"
 
-          if [ -f "$GITHUB_WORKSPACE/$SOURCE_ZIP" ]; then
-            ZIP_PATH="$GITHUB_WORKSPACE/$SOURCE_ZIP"
-          else
-            ZIP_PATH="$(
-              find "$GITHUB_WORKSPACE" \
-                -type f \
-                -name "$SOURCE_ZIP" \
-                -print \
-                -quit
-            )"
-          fi
-
-          if [ -z "$ZIP_PATH" ]; then
-            echo "::error::ZIP não encontrado: $SOURCE_ZIP"
+          if [ ! -f "$ZIP_PATH" ]; then
+            echo "::error::ZIP não encontrado:"
+            echo "$ZIP_PATH"
 
             echo ""
-            echo "ZIPs encontrados:"
+            echo "ZIPs disponíveis:"
             find "$GITHUB_WORKSPACE" \
               -type f \
               -iname "*.zip" \
@@ -74,7 +54,7 @@ jobs:
             exit 1
           fi
 
-          echo "ZIP encontrado:"
+          echo "ZIP:"
           echo "$ZIP_PATH"
 
           rm -rf "$GITHUB_WORKSPACE/source"
@@ -86,7 +66,7 @@ jobs:
             -d "$GITHUB_WORKSPACE/source"
 
           echo ""
-          echo "Procurando Makefile..."
+          echo "Procurando makefile..."
 
           PROJECT_MAKEFILE="$(
             find "$GITHUB_WORKSPACE/source" \
@@ -97,7 +77,7 @@ jobs:
           )"
 
           if [ -z "$PROJECT_MAKEFILE" ]; then
-            echo "::error::Nenhum Makefile encontrado."
+            echo "::error::Nenhum Makefile/makefile encontrado."
             exit 1
           fi
 
@@ -108,10 +88,135 @@ jobs:
           echo "$PROJECT_MAKEFILE"
 
           echo ""
-          echo "Diretório:"
+          echo "Projeto:"
           echo "$PROJECT_DIR"
 
           echo "APP_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+
+      # ==========================================================
+      # LER TARGET REAL DO PROJETO
+      # ==========================================================
+      - name: Read project build configuration
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "=============================================="
+          echo " CONFIGURAÇÃO REAL DO PROJETO"
+          echo "=============================================="
+
+          TARGET_LINE="$(
+            grep -E \
+              '^[[:space:]]*TARGET[[:space:]]*:?[?+]?=' \
+              makefile \
+              | head -n 1 \
+              || true
+          )"
+
+          if [ -z "$TARGET_LINE" ]; then
+            echo "::error::TARGET não encontrado no makefile."
+            exit 1
+          fi
+
+          TARGET_VALUE="$(
+            echo "$TARGET_LINE" \
+              | sed -E 's/^[[:space:]]*TARGET[[:space:]]*:?[?+]?=[[:space:]]*//'
+          )
+
+          echo "TARGET:"
+          echo "$TARGET_VALUE"
+
+          SDK_VERSION="$(
+            echo "$TARGET_VALUE" \
+              | awk -F: '{print $3}'
+          )
+
+          DEPLOYMENT_VERSION="$(
+            echo "$TARGET_VALUE" \
+              | awk -F: '{print $4}'
+          )
+
+          PLATFORM="$(
+            echo "$TARGET_VALUE" \
+              | awk -F: '{print $1}'
+          )
+
+          COMPILER="$(
+            echo "$TARGET_VALUE" \
+              | awk -F: '{print $2}'
+          )
+
+          if [ -z "$SDK_VERSION" ]; then
+            echo "::error::Não foi possível determinar SDK_VERSION."
+            exit 1
+          fi
+
+          if [ -z "$DEPLOYMENT_VERSION" ]; then
+            echo "::error::Não foi possível determinar deployment target."
+            exit 1
+          fi
+
+          echo ""
+          echo "Platform:     $PLATFORM"
+          echo "Compiler:     $COMPILER"
+          echo "SDK:          $SDK_VERSION"
+          echo "Deployment:   $DEPLOYMENT_VERSION"
+
+          echo "TARGET_VALUE=$TARGET_VALUE" >> "$GITHUB_ENV"
+          echo "SDK_VERSION=$SDK_VERSION" >> "$GITHUB_ENV"
+          echo "MIN_IOS=$DEPLOYMENT_VERSION" >> "$GITHUB_ENV"
+
+          echo ""
+          echo "=============================================="
+          echo " MAKEFILE"
+          echo "=============================================="
+
+          cat makefile
+
+
+      # ==========================================================
+      # VALIDAR ESTRUTURA DO PROJETO
+      # ==========================================================
+      - name: Validate project structure
+        working-directory: ${{ env.APP_DIR }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "=============================================="
+          echo " VALIDANDO PROJETO"
+          echo "=============================================="
+
+          REQUIRED_FILES=(
+            "makefile"
+            "layout/entitlements.plist"
+            "layout/Resources/Info.plist"
+          )
+
+          for FILE in "${REQUIRED_FILES[@]}"; do
+            if [ ! -e "$FILE" ]; then
+              echo "::error::Arquivo obrigatório não encontrado: $FILE"
+              exit 1
+            fi
+          done
+
+          REQUIRED_DIRS=(
+            "sources"
+            "headers"
+            "esp"
+            "layout"
+          )
+
+          for DIR in "${REQUIRED_DIRS[@]}"; do
+            if [ ! -d "$DIR" ]; then
+              echo "::error::Diretório obrigatório não encontrado: $DIR"
+              exit 1
+            fi
+          done
+
+          echo "Estrutura do projeto OK."
 
 
       # ==========================================================
@@ -133,7 +238,7 @@ jobs:
           xcodebuild -version
 
           echo ""
-          echo "SDKs disponíveis:"
+          echo "SDKs do Xcode:"
           xcodebuild -showsdks
 
 
@@ -157,7 +262,6 @@ jobs:
           echo "ldid:"
           command -v ldid
 
-          echo ""
           ldid -V || true
 
 
@@ -194,7 +298,7 @@ jobs:
           echo "$THEOS/bin" >> "$GITHUB_PATH"
 
           echo ""
-          echo "Theos:"
+          echo "THEOS:"
           echo "$THEOS"
 
           echo ""
@@ -203,7 +307,7 @@ jobs:
 
 
       # ==========================================================
-      # INSTALAR SDK EXIGIDO PELO PROJETO
+      # INSTALAR SDK EXATO DO TARGET
       # ==========================================================
       - name: Install project SDK
         shell: bash
@@ -211,12 +315,15 @@ jobs:
           set -Eeuo pipefail
 
           echo "=============================================="
-          echo " SDK DO PROJETO"
+          echo " INSTALANDO SDK"
           echo "=============================================="
 
+          echo "SDK solicitado:"
+          echo "iPhoneOS${SDK_VERSION}.sdk"
+
           echo ""
-          echo "SDK solicitado: iPhoneOS${SDK_VERSION}.sdk"
-          echo "iOS mínimo: ${MIN_IOS}"
+          echo "Deployment target:"
+          echo "iOS ${MIN_IOS}"
 
           SDK_REPO="$GITHUB_WORKSPACE/theos-sdks"
 
@@ -231,7 +338,7 @@ jobs:
           SDK_DEST="$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
           if [ ! -d "$SDK_SOURCE" ]; then
-            echo "::error::O SDK exigido pelo projeto não foi encontrado:"
+            echo "::error::SDK exigido pelo projeto não encontrado:"
             echo "$SDK_SOURCE"
 
             echo ""
@@ -260,7 +367,7 @@ jobs:
           fi
 
           echo ""
-          echo "SDK instalado com sucesso:"
+          echo "SDK instalado:"
           ls -ld "$SDK_DEST"
 
 
@@ -273,7 +380,7 @@ jobs:
           set -Eeuo pipefail
 
           echo "=============================================="
-          echo " VALIDAÇÃO"
+          echo " VALIDAÇÃO THEOS + SDK"
           echo "=============================================="
 
           test -f "$THEOS/makefiles/common.mk"
@@ -281,77 +388,41 @@ jobs:
           test -d "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
           echo ""
-          echo "Theos:"
+          echo "Theos OK:"
           echo "$THEOS"
 
           echo ""
-          echo "SDK:"
+          echo "SDK OK:"
           ls -ld "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
 
       # ==========================================================
-      # VALIDAR CONFIGURAÇÃO REAL DO PROJETO
+      # VALIDAR ENTITLEMENTS
       # ==========================================================
-      - name: Validate project configuration
+      - name: Validate entitlements
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -Eeuo pipefail
 
           echo "=============================================="
-          echo " CONFIGURAÇÃO DO PROJETO"
+          echo " VALIDANDO ENTITLEMENTS"
           echo "=============================================="
 
-          echo ""
-          echo "Diretório:"
-          pwd
+          /usr/libexec/PlistBuddy \
+            -c "Print" \
+            layout/entitlements.plist \
+            >/dev/null
+
+          echo "entitlements.plist válido."
 
           echo ""
-          echo "TARGET encontrado no Makefile:"
-
-          grep -nE \
-            '^[[:space:]]*TARGET[[:space:]]*[:?+]?=' \
-            Makefile \
-            || true
-
-          echo ""
-          echo "SDKVERSION encontrado:"
-
-          grep -nE \
-            '^[[:space:]]*SDKVERSION[[:space:]]*[:?+]?=' \
-            Makefile \
-            || true
-
-          echo ""
-          echo "=============================================="
-          echo " MAKEFILE ORIGINAL"
-          echo "=============================================="
-
-          cat Makefile
-
-          echo ""
-          echo "=============================================="
-          echo " CONFERÊNCIA"
-          echo "=============================================="
-
-          if grep -Eq \
-            'SDKVERSION[[:space:]]*[:?+]?=[[:space:]]*16\.5' \
-            Makefile; then
-
-            echo "OK: projeto utiliza SDK 16.5."
-
-          else
-            echo "::warning::O Makefile não declara explicitamente SDKVERSION=16.5."
-            echo "O build utilizará SDKVERSION=$SDK_VERSION."
-          fi
-
-          echo ""
-          echo "O deployment target do projeto será preservado."
-          echo "O workflow não sobrescreve TARGET."
+          echo "CODESIGN FLAGS:"
+          grep -n "CODESIGN_FLAGS" makefile || true
 
 
       # ==========================================================
-      # COMPILAR
+      # BUILD
       # ==========================================================
       - name: Build project
         working-directory: ${{ env.APP_DIR }}
@@ -368,42 +439,45 @@ jobs:
           pwd
 
           echo ""
-          echo "Theos:"
-          echo "$THEOS"
+          echo "TARGET:"
+          echo "$TARGET_VALUE"
 
           echo ""
           echo "SDK:"
           echo "$SDK_VERSION"
 
           echo ""
-          echo "iOS mínimo configurado pelo workflow:"
+          echo "Deployment:"
           echo "$MIN_IOS"
 
           echo ""
           echo "Limpando build anterior..."
 
           make clean \
+            TARGET="$TARGET_VALUE" \
             SDKVERSION="$SDK_VERSION" \
             || true
 
           echo ""
-          echo "Compilando e empacotando..."
+          echo "Compilando..."
 
           make package \
+            TARGET="$TARGET_VALUE" \
             SDKVERSION="$SDK_VERSION" \
             FINALPACKAGE=1 \
             DEBUG=0 \
+            FOR_RELEASE=1 \
             messages=yes \
             2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
           echo ""
           echo "=============================================="
-          echo " BUILD FINALIZADO"
+          echo " BUILD CONCLUÍDO"
           echo "=============================================="
 
 
       # ==========================================================
-      # LOCALIZAR TIPA
+      # VALIDAR ARTEFATO GERADO PELO PRÓPRIO MAKEFILE
       # ==========================================================
       - name: Locate TIPA
         working-directory: ${{ env.APP_DIR }}
@@ -453,7 +527,64 @@ jobs:
 
 
       # ==========================================================
-      # CRIAR IPA
+      # VALIDAR PAYLOAD
+      # ==========================================================
+      - name: Validate TIPA
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "=============================================="
+          echo " VALIDANDO TIPA"
+          echo "=============================================="
+
+          rm -rf "$GITHUB_WORKSPACE/tipa_check"
+
+          mkdir -p "$GITHUB_WORKSPACE/tipa_check"
+
+          unzip -q \
+            "$TIPA_PATH" \
+            -d "$GITHUB_WORKSPACE/tipa_check"
+
+          if [ ! -d "$GITHUB_WORKSPACE/tipa_check/Payload" ]; then
+            echo "::error::TIPA não contém Payload."
+            exit 1
+          fi
+
+          APP="$(
+            find "$GITHUB_WORKSPACE/tipa_check/Payload" \
+              -maxdepth 1 \
+              -type d \
+              -name "*.app" \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$APP" ]; then
+            echo "::error::Nenhum .app encontrado no Payload."
+            exit 1
+          fi
+
+          echo ""
+          echo "APP:"
+          echo "$APP"
+
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo "::error::Info.plist não encontrado."
+            exit 1
+          fi
+
+          if [ ! -x "$APP/TrollSpeed" ]; then
+            echo "::error::Executável TrollSpeed não encontrado ou não executável."
+            exit 1
+          fi
+
+          echo ""
+          echo "Payload validado."
+
+
+      # ==========================================================
+      # CRIAR IPA A PARTIR DO TIPA
       # ==========================================================
       - name: Create IPA
         shell: bash
@@ -502,6 +633,10 @@ jobs:
 
           cp -R \
             "$APP" \
+            "$GITHUB_WORKSPACE/output/$APP_NAME.app.tmp"
+
+          mv \
+            "$GITHUB_WORKSPACE/output/$APP_NAME.app.tmp" \
             "$GITHUB_WORKSPACE/output/Payload/$APP_NAME.app"
 
           cd "$GITHUB_WORKSPACE/output"
@@ -554,7 +689,7 @@ jobs:
 
 
       # ==========================================================
-      # UPLOAD LOGS
+      # UPLOAD LOG
       # ==========================================================
       - name: Upload build log
         if: always()
@@ -567,7 +702,3 @@ jobs:
             source/**/.theos/obj/**
           if-no-files-found: ignore
           retention-days: 7
-
-O ponto principal: agora o workflow instala "iPhoneOS16.5.sdk" e força apenas "SDKVERSION=16.5". O "TARGET" original não é artificialmente alterado, então o projeto mantém sua configuração própria. Isso é mais correto do que transformar tudo em "15.6:15.0".
-
-Se o Makefile original for, por exemplo, "TARGET = iphone:clang:16.5:14.0", ele continuará usando 16.5/14.0, enquanto o SDK necessário estará disponível.
