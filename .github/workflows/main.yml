@@ -11,9 +11,12 @@ env:
   SOURCE_ZIP: LGL-Inspired-Ultimate-Standoff2-Players-v3-buildfixed.zip
 
   # ============================================================
-  # CONFIGURAÇÃO EXIGIDA PELO PROJETO
+  # CONFIGURAÇÃO DO PROJETO
   # ============================================================
-  SDK_VERSION: "15.6"
+  # O projeto original utiliza iPhoneOS16.5.sdk.
+  # Deployment mínimo permanece em iOS 15.0.
+  # ============================================================
+  SDK_VERSION: "16.5"
   MIN_IOS: "15.0"
 
 jobs:
@@ -332,17 +335,19 @@ jobs:
           echo "=============================================="
 
           if grep -Eq \
-            'TARGET[[:space:]]*[:?+]?=[[:space:]]*iphone:clang:15\.6:15\.0' \
+            'SDKVERSION[[:space:]]*[:?+]?=[[:space:]]*16\.5' \
             Makefile; then
 
-            echo "OK: projeto configurado para:"
-            echo "SDK 15.6"
-            echo "iOS mínimo 15.0"
+            echo "OK: projeto utiliza SDK 16.5."
 
           else
-            echo "::warning::O Makefile não possui exatamente TARGET iphone:clang:15.6:15.0."
-            echo "O build continuará usando a configuração existente."
+            echo "::warning::O Makefile não declara explicitamente SDKVERSION=16.5."
+            echo "O build utilizará SDKVERSION=$SDK_VERSION."
           fi
+
+          echo ""
+          echo "O deployment target do projeto será preservado."
+          echo "O workflow não sobrescreve TARGET."
 
 
       # ==========================================================
@@ -367,17 +372,19 @@ jobs:
           echo "$THEOS"
 
           echo ""
-          echo "SDK solicitado:"
+          echo "SDK:"
           echo "$SDK_VERSION"
 
           echo ""
-          echo "iOS mínimo:"
+          echo "iOS mínimo configurado pelo workflow:"
           echo "$MIN_IOS"
 
           echo ""
           echo "Limpando build anterior..."
 
-          make clean || true
+          make clean \
+            SDKVERSION="$SDK_VERSION" \
+            || true
 
           echo ""
           echo "Compilando e empacotando..."
@@ -560,3 +567,7 @@ jobs:
             source/**/.theos/obj/**
           if-no-files-found: ignore
           retention-days: 7
+
+O ponto principal: agora o workflow instala "iPhoneOS16.5.sdk" e força apenas "SDKVERSION=16.5". O "TARGET" original não é artificialmente alterado, então o projeto mantém sua configuração própria. Isso é mais correto do que transformar tudo em "15.6:15.0".
+
+Se o Makefile original for, por exemplo, "TARGET = iphone:clang:16.5:14.0", ele continuará usando 16.5/14.0, enquanto o SDK necessário estará disponível.
