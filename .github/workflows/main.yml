@@ -1,4 +1,4 @@
-name: UE4 Static Analysis
+name: UE4 ARM64 Binary Analysis
 
 on:
   workflow_dispatch:
@@ -7,101 +7,179 @@ permissions:
   contents: read
 
 env:
-  LIB_URL: "https://www.mediafire.com/file/cuk8zo97aiiddxv/libUE4.so/file?dkey=igxg46m4yif&r=1253"
-  LIB_NAME: "libUE4.so"
+  MEDIAFIRE_URL: "https://www.mediafire.com/file/cuk8zo97aiiddxv/libUE4.so/file?dkey=igxg46m4yif&r=1253"
   GHIDRA_VERSION: "12.1.4"
+  GHIDRA_DATE: "20260921"
 
 jobs:
   analyze:
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
 
     steps:
-      - name: Download library
-        shell: bash
+      - name: Preparar ambiente
         run: |
-          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            curl \
+            unzip \
+            file \
+            binutils \
+            python3
 
-          mkdir -p input output ghidra-project
-
-          curl -fL \
-            --retry 5 \
-            --retry-all-errors \
-            "$LIB_URL" \
-            -o "input/$LIB_NAME"
-
-          test -s "input/$LIB_NAME"
-
-          file "input/$LIB_NAME"
-
-      - name: Install Java 21
+      - name: Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Download Ghidra
+      - name: Baixar libUE4.so
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
+          mkdir -p input output
 
           curl -fL \
             --retry 5 \
+            --retry-delay 3 \
             --retry-all-errors \
-            "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC.zip" \
+            -A "Mozilla/5.0" \
+            "$MEDIAFIRE_URL" \
+            -o input/mediafire-response
+
+          echo "Arquivo recebido:"
+          file input/mediafire-response
+          ls -lh input/mediafire-response
+
+          # MediaFire pode devolver uma página HTML em vez
+          # do arquivo. Detecta isso antes de continuar.
+          if file input/mediafire-response | grep -qiE 'HTML|text'; then
+            echo "::error::MediaFire retornou uma página HTML, não a libUE4.so."
+            echo "É necessária uma URL direta do arquivo."
+            exit 1
+          fi
+
+          mv input/mediafire-response input/libUE4.so
+
+      - name: Validar ELF ARM64
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          file input/libUE4.so | tee output/file.txt
+
+          readelf -h input/libUE4.so \
+            | tee output/elf-header.txt
+
+          grep -q "AArch64" output/elf-header.txt || {
+            echo "::error::A biblioteca não é ELF AArch64."
+            exit 1
+          }
+
+      - name: Baixar Ghidra
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          ZIP="ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
+          DIR="ghidra_${GHIDRA_VERSION}_PUBLIC"
+
+          URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/${ZIP}"
+
+          curl -fL \
+            --retry 5 \
+            --retry-delay 3 \
+            --retry-all-errors \
+            "$URL" \
             -o ghidra.zip
 
           unzip -q ghidra.zip
-          mv "ghidra_${GHIDRA_VERSION}_PUBLIC" ghidra
 
-          test -x ghidra/support/analyzeHeadless
+          test -d "$DIR"
+          test -x "$DIR/support/analyzeHeadless"
 
-      - name: Ghidra headless analysis
+          mv "$DIR" ghidra
+
+      - name: Analisar com Ghidra Headless
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
+          mkdir -p ghidra-project
 
           ./ghidra/support/analyzeHeadless \
             ghidra-project \
             UE4Analysis \
-            -import "input/$LIB_NAME" \
+            -import input/libUE4.so \
             -processor "AARCH64:LE:64:v8A" \
-            -analysisTimeoutPerFile 1800 \
-            -max-cpu 4 \
             -overwrite \
-            -log "output/ghidra.log"
+            -analysisTimeoutPerFile 1800 \
+            -log output/ghidra.log
 
-      - name: Export basic binary information
+      - name: Extrair informações ELF
         shell: bash
         run: |
-          set -euo pipefail
-
-          file input/libUE4.so > output/file.txt
+          set -Eeuo pipefail
 
           readelf -h input/libUE4.so \
-            > output/elf-header.txt
+            > output/header.txt
 
           readelf -S input/libUE4.so \
             > output/sections.txt
 
-          readelf -Ws input/libUE4.so \
-            > output/symbols.txt || true
+          readelf -l input/libUE4.so \
+            > output/program-headers.txt
 
           readelf -d input/libUE4.so \
             > output/dynamic.txt
 
+          readelf -Ws input/libUE4.so \
+            > output/symbols.txt || true
+
+          readelf -r input/libUE4.so \
+            > output/relocations.txt || true
+
           strings -a -n 5 input/libUE4.so \
             > output/strings.txt
 
-      - name: Package
+      - name: Procurar estruturas conhecidas
         shell: bash
+        run: |
+          grep -Ei \
+            'UObject|UClass|UFunction|UStruct|FName|FNamePool|FString|AActor|UWorld|GWorld|GUObjectArray|GNames|GObjects' \
+            output/strings.txt \
+            > output/ue4-references.txt || true
+
+      - name: Criar relatório
+        shell: bash
+        run: |
+          {
+            echo "===== LIBRARY ====="
+            file input/libUE4.so
+
+            echo
+            echo "===== SIZE ====="
+            stat -c "%s bytes" input/libUE4.so
+
+            echo
+            echo "===== ARCHITECTURE ====="
+            grep -E "Class:|Machine:|Type:" output/elf-header.txt
+
+            echo
+            echo "===== UE4 REFERENCES ====="
+            wc -l output/ue4-references.txt
+          } | tee output/summary.txt
+
+      - name: Compactar resultado
         run: |
           tar -czf UE4-analysis.tar.gz \
             output \
             ghidra-project
 
-      - name: Upload artifact
+      - name: Publicar resultado
         uses: actions/upload-artifact@v4
         with:
-          name: UE4-Ghidra-Analysis
+          name: UE4-ARM64-Ghidra-Analysis
           path: UE4-analysis.tar.gz
           if-no-files-found: error
