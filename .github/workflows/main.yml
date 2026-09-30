@@ -1,4 +1,4 @@
-name: UE4 Analysis
+name: UE4 Static Analysis
 
 on:
   workflow_dispatch:
@@ -6,52 +6,102 @@ on:
 permissions:
   contents: read
 
+env:
+  LIB_URL: "https://www.mediafire.com/file/cuk8zo97aiiddxv/libUE4.so/file?dkey=igxg46m4yif&r=1253"
+  LIB_NAME: "libUE4.so"
+  GHIDRA_VERSION: "12.1.4"
+
 jobs:
   analyze:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Verificar libUE4.so
+      - name: Download library
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f libUE4.so || {
-            echo "::error::libUE4.so não encontrado na raiz do repositório."
-            exit 1
-          }
+          mkdir -p input output ghidra-project
 
-          echo "Arquivo:"
-          ls -lh libUE4.so
+          curl -fL \
+            --retry 5 \
+            --retry-all-errors \
+            "$LIB_URL" \
+            -o "input/$LIB_NAME"
 
-          echo
-          echo "Formato ELF:"
-          file libUE4.so
+          test -s "input/$LIB_NAME"
 
-          echo
-          echo "Arquitetura:"
-          readelf -h libUE4.so | grep -E 'Class|Machine|Type'
+          file "input/$LIB_NAME"
 
-      - name: Criar diretório de análise
-        run: |
-          mkdir -p output
+      - name: Install Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
 
-      - name: Informações da lib
+      - name: Download Ghidra
         shell: bash
         run: |
           set -euo pipefail
 
-          readelf -h libUE4.so > output/elf-header.txt
-          readelf -S libUE4.so > output/sections.txt
-          readelf -d libUE4.so > output/dynamic.txt
-          strings -n 6 libUE4.so > output/strings.txt
+          curl -fL \
+            --retry 5 \
+            --retry-all-errors \
+            "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC.zip" \
+            -o ghidra.zip
 
-      - name: Publicar análise
+          unzip -q ghidra.zip
+          mv "ghidra_${GHIDRA_VERSION}_PUBLIC" ghidra
+
+          test -x ghidra/support/analyzeHeadless
+
+      - name: Ghidra headless analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ./ghidra/support/analyzeHeadless \
+            ghidra-project \
+            UE4Analysis \
+            -import "input/$LIB_NAME" \
+            -processor "AARCH64:LE:64:v8A" \
+            -analysisTimeoutPerFile 1800 \
+            -max-cpu 4 \
+            -overwrite \
+            -log "output/ghidra.log"
+
+      - name: Export basic binary information
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          file input/libUE4.so > output/file.txt
+
+          readelf -h input/libUE4.so \
+            > output/elf-header.txt
+
+          readelf -S input/libUE4.so \
+            > output/sections.txt
+
+          readelf -Ws input/libUE4.so \
+            > output/symbols.txt || true
+
+          readelf -d input/libUE4.so \
+            > output/dynamic.txt
+
+          strings -a -n 5 input/libUE4.so \
+            > output/strings.txt
+
+      - name: Package
+        shell: bash
+        run: |
+          tar -czf UE4-analysis.tar.gz \
+            output \
+            ghidra-project
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ue4-analysis
-          path: output/
+          name: UE4-Ghidra-Analysis
+          path: UE4-analysis.tar.gz
           if-no-files-found: error
