@@ -1,4 +1,4 @@
-name: Build Pro iOS
+name: Build Theos iOS
 
 on:
   workflow_dispatch:
@@ -8,141 +8,125 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - name: Baixar repositorio
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Localizar Pro.zip
+      - name: Procurar theos-2.5.zip
         shell: bash
         run: |
           set -e
 
-          ZIP="$(find "$GITHUB_WORKSPACE" -type f -iname 'theos-2.5.zip' -print -quit)"
-
-          if [ -z "$ZIP" ]; then
-            echo "ERRO: Pro.zip nao encontrado."
-            echo "Coloque Pro.zip no repositorio."
-            find "$GITHUB_WORKSPACE" -maxdepth 4 -type f -print
-            exit 1
-          fi
-
-          echo "Pro encontrado:"
-          echo "$ZIP"
-
-          echo "PRO_ZIP=$ZIP" >> "$GITHUB_ENV"
-
-      - name: Extrair Pro.zip
-        shell: bash
-        run: |
-          set -e
-
-          rm -rf "$RUNNER_TEMP/Pro"
-          mkdir -p "$RUNNER_TEMP/Pro"
-
-          unzip -o "$PRO_ZIP" -d "$RUNNER_TEMP/Pro"
-
-          echo "Conteudo do Pro.zip:"
-          find "$RUNNER_TEMP/Pro" -maxdepth 5 -type f -print | sort
-
-      - name: Localizar Makefile
-        shell: bash
-        run: |
-          set -e
-
-          MAKEFILE="$(find "$RUNNER_TEMP/Pro" \
+          ZIP="$(find "$GITHUB_WORKSPACE" \
             -type f \
-            -name 'Makefile' \
+            -iname 'theos-2.5.zip' \
             -print -quit)"
 
-          if [ -z "$MAKEFILE" ]; then
-            echo "ERRO: Pro.zip nao possui Makefile."
+          if [ -z "$ZIP" ]; then
+            echo "ERRO: theos-2.5.zip não encontrado."
             echo
-            echo "Estrutura encontrada:"
-            find "$RUNNER_TEMP/Pro" -maxdepth 8 -print | sort
+            echo "Arquivos encontrados:"
+            find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -print | sort
             exit 1
           fi
 
-          PROJECT_DIR="$(dirname "$MAKEFILE")"
+          echo "Arquivo encontrado:"
+          echo "$ZIP"
 
-          echo "Makefile encontrado:"
-          echo "$MAKEFILE"
+          echo "THEOS_ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Extrair Theos
+        shell: bash
+        run: |
+          set -e
+
+          rm -rf "$RUNNER_TEMP/theos"
+          mkdir -p "$RUNNER_TEMP/theos"
+
+          unzip -oq "$THEOS_ZIP" -d "$RUNNER_TEMP/theos"
+
+          echo "Theos extraído:"
+          find "$RUNNER_TEMP/theos" -maxdepth 3 -type f -print | sort | head -200
+
+      - name: Localizar diretório Theos
+        shell: bash
+        run: |
+          set -e
+
+          THEOS_DIR=""
+
+          while IFS= read -r dir; do
+            if [ -f "$dir/bin/nic.pl" ] &&
+               [ -d "$dir/makefiles" ]; then
+              THEOS_DIR="$dir"
+              break
+            fi
+          done < <(find "$RUNNER_TEMP/theos" -type d -print)
+
+          if [ -z "$THEOS_DIR" ]; then
+            echo "ERRO: diretório Theos não encontrado."
+            exit 1
+          fi
+
+          echo "Theos:"
+          echo "$THEOS_DIR"
+
+          echo "THEOS=$THEOS_DIR" >> "$GITHUB_ENV"
+
+      - name: Procurar projeto
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT_DIR=""
+
+          while IFS= read -r makefile; do
+            DIR="$(dirname "$makefile")"
+
+            case "$DIR" in
+              "$THEOS"/*)
+                continue
+                ;;
+            esac
+
+            PROJECT_DIR="$DIR"
+            break
+          done < <(find "$GITHUB_WORKSPACE" -type f -name Makefile -print)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERRO: nenhum projeto Theos encontrado."
+            echo
+            echo "Makefiles encontrados:"
+            find "$GITHUB_WORKSPACE" -type f -name Makefile -print
+            exit 1
+          fi
 
           echo "Projeto:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Instalar Theos
-        shell: bash
-        run: |
-          set -e
-
-          git clone --depth 1 \
-            https://github.com/theos/theos.git \
-            "$RUNNER_TEMP/theos"
-
-          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
-
-      - name: Verificar ambiente
-        shell: bash
-        run: |
-          set -e
-
-          export THEOS="$RUNNER_TEMP/theos"
-
-          echo "Xcode:"
-          xcodebuild -version
-
-          echo
-          echo "SDK:"
-          xcrun --sdk iphoneos --show-sdk-path
-
-          echo
-          echo "Theos:"
-          ls -la "$THEOS"
-
       - name: Compilar
         shell: bash
         run: |
           set -e
 
-          export THEOS="$RUNNER_TEMP/theos"
+          export THEOS="$THEOS"
 
           cd "$PROJECT_DIR"
 
-          echo "Build directory:"
+          echo "Diretório:"
           pwd
 
-          echo
           echo "Makefile:"
           cat Makefile
-
-          echo
-          echo "Compilando..."
 
           make clean || true
           make package FINALPACKAGE=1
 
-      - name: Encontrar artefatos
-        shell: bash
-        run: |
-          set -e
-
-          echo "Resultados:"
-
-          find "$PROJECT_DIR" \
-            -type f \
-            \( \
-              -name '*.dylib' \
-              -o -name '*.deb' \
-              -o -name '*.ipa' \
-            \) \
-            -print | sort
-
-      - name: Upload do build
+      - name: Publicar resultado
         uses: actions/upload-artifact@v4
         with:
-          name: pro-build
+          name: ios-build
           path: |
             ${{ env.PROJECT_DIR }}/packages/*
-            ${{ env.PROJECT_DIR }}/**/*.dylib
           if-no-files-found: error
