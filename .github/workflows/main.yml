@@ -1,185 +1,137 @@
-name: UE4 ARM64 Binary Analysis
+name: Build Pro iOS
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
-env:
-  MEDIAFIRE_URL: "https://www.mediafire.com/file/cuk8zo97aiiddxv/libUE4.so/file?dkey=igxg46m4yif&r=1253"
-  GHIDRA_VERSION: "12.1.4"
-  GHIDRA_DATE: "20260921"
-
 jobs:
-  analyze:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+  build:
+    runs-on: macos-15
 
     steps:
-      - name: Preparar ambiente
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            curl \
-            unzip \
-            file \
-            binutils \
-            python3
+      - name: Baixar arquivos do repositorio
+        uses: actions/checkout@v4
 
-      - name: Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Baixar libUE4.so
+      - name: Procurar Pro.zip
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
-          mkdir -p input output
+          ZIP="$(find . -type f -iname 'Pro.zip' -print -quit)"
 
-          curl -fL \
-            --retry 5 \
-            --retry-delay 3 \
-            --retry-all-errors \
-            -A "Mozilla/5.0" \
-            "$MEDIAFIRE_URL" \
-            -o input/mediafire-response
-
-          echo "Arquivo recebido:"
-          file input/mediafire-response
-          ls -lh input/mediafire-response
-
-          # MediaFire pode devolver uma página HTML em vez
-          # do arquivo. Detecta isso antes de continuar.
-          if file input/mediafire-response | grep -qiE 'HTML|text'; then
-            echo "::error::MediaFire retornou uma página HTML, não a libUE4.so."
-            echo "É necessária uma URL direta do arquivo."
+          if [ -z "$ZIP" ]; then
+            echo "ERRO: Pro.zip nao encontrado."
+            echo "Arquivos encontrados:"
+            find . -maxdepth 4 -type f -print | sort
             exit 1
           fi
 
-          mv input/mediafire-response input/libUE4.so
+          echo "Pro.zip encontrado em: $ZIP"
+          echo "PRO_ZIP=$ZIP" >> "$GITHUB_ENV"
 
-      - name: Validar ELF ARM64
+      - name: Extrair Pro.zip
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
-          file input/libUE4.so | tee output/file.txt
+          rm -rf "$RUNNER_TEMP/pro"
+          mkdir -p "$RUNNER_TEMP/pro"
 
-          readelf -h input/libUE4.so \
-            | tee output/elf-header.txt
+          unzip -q "$PRO_ZIP" -d "$RUNNER_TEMP/pro"
 
-          grep -q "AArch64" output/elf-header.txt || {
-            echo "::error::A biblioteca não é ELF AArch64."
+          echo "Conteudo extraido:"
+          find "$RUNNER_TEMP/pro" -maxdepth 5 -print | sort | head -500
+
+      - name: Encontrar projeto Theos
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT=""
+
+          while IFS= read -r file; do
+            DIR="$(dirname "$file")"
+
+            if grep -q 'THEOS.*makefiles/common.mk\|makefiles/common.mk' "$file" 2>/dev/null; then
+              PROJECT="$DIR"
+              break
+            fi
+          done < <(find "$RUNNER_TEMP/pro" -type f -name Makefile -print)
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERRO: nenhum Makefile Theos foi encontrado."
+            echo "Makefiles encontrados:"
+            find "$RUNNER_TEMP/pro" -type f -name Makefile -print
             exit 1
-          }
+          fi
 
-      - name: Baixar Ghidra
+          echo "Projeto Theos encontrado em:"
+          echo "$PROJECT"
+
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Instalar dependencias do Theos
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
-          ZIP="ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
-          DIR="ghidra_${GHIDRA_VERSION}_PUBLIC"
+          if [ ! -d "$HOME/theos" ]; then
+            git clone --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          fi
 
-          URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/${ZIP}"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
 
-          curl -fL \
-            --retry 5 \
-            --retry-delay 3 \
-            --retry-all-errors \
-            "$URL" \
-            -o ghidra.zip
-
-          unzip -q ghidra.zip
-
-          test -d "$DIR"
-          test -x "$DIR/support/analyzeHeadless"
-
-          mv "$DIR" ghidra
-
-      - name: Analisar com Ghidra Headless
+      - name: Preparar SDK e ferramentas
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
-          mkdir -p ghidra-project
+          export THEOS="$HOME/theos"
 
-          ./ghidra/support/analyzeHeadless \
-            ghidra-project \
-            UE4Analysis \
-            -import input/libUE4.so \
-            -processor "AARCH64:LE:64:v8A" \
-            -overwrite \
-            -analysisTimeoutPerFile 1800 \
-            -log output/ghidra.log
+          echo "Theos:"
+          "$THEOS/bin/nic.pl" --version || true
 
-      - name: Extrair informações ELF
+          echo "Xcode:"
+          xcodebuild -version
+
+          echo "SDKs:"
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: Compilar projeto
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
-          readelf -h input/libUE4.so \
-            > output/header.txt
+          export THEOS="$HOME/theos"
 
-          readelf -S input/libUE4.so \
-            > output/sections.txt
+          cd "$PROJECT"
 
-          readelf -l input/libUE4.so \
-            > output/program-headers.txt
+          echo "Diretorio de build:"
+          pwd
 
-          readelf -d input/libUE4.so \
-            > output/dynamic.txt
+          echo "Makefile:"
+          sed -n '1,240p' Makefile
 
-          readelf -Ws input/libUE4.so \
-            > output/symbols.txt || true
+          make clean || true
+          make package FINALPACKAGE=1
 
-          readelf -r input/libUE4.so \
-            > output/relocations.txt || true
-
-          strings -a -n 5 input/libUE4.so \
-            > output/strings.txt
-
-      - name: Procurar estruturas conhecidas
+      - name: Procurar resultados
         shell: bash
         run: |
-          grep -Ei \
-            'UObject|UClass|UFunction|UStruct|FName|FNamePool|FString|AActor|UWorld|GWorld|GUObjectArray|GNames|GObjects' \
-            output/strings.txt \
-            > output/ue4-references.txt || true
+          set -e
 
-      - name: Criar relatório
-        shell: bash
-        run: |
-          {
-            echo "===== LIBRARY ====="
-            file input/libUE4.so
+          echo "Arquivos gerados:"
 
-            echo
-            echo "===== SIZE ====="
-            stat -c "%s bytes" input/libUE4.so
-
-            echo
-            echo "===== ARCHITECTURE ====="
-            grep -E "Class:|Machine:|Type:" output/elf-header.txt
-
-            echo
-            echo "===== UE4 REFERENCES ====="
-            wc -l output/ue4-references.txt
-          } | tee output/summary.txt
-
-      - name: Compactar resultado
-        run: |
-          tar -czf UE4-analysis.tar.gz \
-            output \
-            ghidra-project
+          find "$PROJECT" \
+            \( -name '*.dylib' -o -name '*.deb' -o -name '*.ipa' \) \
+            -type f \
+            -print \
+            | sort
 
       - name: Publicar resultado
         uses: actions/upload-artifact@v4
         with:
-          name: UE4-ARM64-Ghidra-Analysis
-          path: UE4-analysis.tar.gz
+          name: pro-build
+          path: |
+            ${{ env.PROJECT }}/packages/*
+            ${{ env.PROJECT }}/.theos/obj/**/*.dylib
           if-no-files-found: error
