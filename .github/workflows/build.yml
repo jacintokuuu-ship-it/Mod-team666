@@ -1,0 +1,123 @@
+
+name: Build ToolOverlayIOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Compile iOS Tweak and App
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        uses: Randomblock1/theos-action@v1
+        with:
+          theos-dir: theos
+          theos-src: https://github.com/theos/theos
+          theos-sdks: https://github.com/theos/sdks
+
+      - name: Extract uploaded project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ZIP_FILE=""
+
+          for file in ./*.zip; do
+            [ -f "$file" ] || continue
+
+            if unzip -Z1 "$file" | grep -qx 'Makefile'; then
+              ZIP_FILE="$file"
+              break
+            fi
+          done
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::No ZIP containing the project Makefile was found at repository root."
+            exit 1
+          fi
+
+          echo "Using archive: $ZIP_FILE"
+
+          mkdir -p source
+          unzip -oq "$ZIP_FILE" -d source
+
+          test -f source/Makefile
+          test -f source/Tweak.x
+          test -f source/control
+          test -f source/OverlayIOSTOOL.plist
+          test -f source/Resources/Info.plist
+          test -f source/App/main.m
+          test -f source/App/AppDelegate.m
+          test -f source/App/ViewController.m
+
+          echo "PROJECT_DIR=$GITHUB_WORKSPACE/source" >> "$GITHUB_ENV"
+
+      - name: Validate property lists
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          plutil -lint \
+            "$PROJECT_DIR/Resources/Info.plist" \
+            "$PROJECT_DIR/entitlements.plist" \
+            "$PROJECT_DIR/OverlayIOSTOOL.plist"
+
+      - name: Compile and package rootless build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$PROJECT_DIR"
+
+          export THEOS="$GITHUB_WORKSPACE/theos"
+
+          test -f "$THEOS/makefiles/common.mk"
+
+          make clean
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+
+      - name: Verify package output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          packages=("$PROJECT_DIR"/packages/*.deb)
+
+          if [ "${#packages[@]}" -eq 0 ]; then
+            echo "::error::The build did not generate a .deb package."
+            exit 1
+          fi
+
+          for package in "${packages[@]}"; do
+            echo "Generated package: $package"
+            file "$package"
+          done
+
+      - name: Upload compiled package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ToolOverlayIOS-rootless-deb
+          path: source/packages/*.deb
+          if-no-files-found: error
+          retention-days: 14
