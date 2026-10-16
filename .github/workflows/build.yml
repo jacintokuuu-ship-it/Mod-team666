@@ -1,16 +1,11 @@
-
-name: Build ToolOverlayIOS
+name: Build OverlayIOSTOOL (Theos rootless)
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [main, master]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,103 +16,115 @@ concurrency:
 
 jobs:
   build:
-    name: Compile iOS Tweak and App
-    runs-on: macos-14
+    name: Compile and package rootless tweak
+    # macos-15 is currently supported; macos-14 is being retired in November 2026.
+    runs-on: macos-15
+    env:
+      THEOS: ${{ github.workspace }}/theos
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup Theos
-        uses: Randomblock1/theos-action@v1
         with:
-          theos-dir: theos
-          theos-src: https://github.com/theos/theos
-          theos-sdks: https://github.com/theos/sdks
+          submodules: recursive
 
-      - name: Extract uploaded project ZIP
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install make ldid dpkg
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Install Theos and the matching iOS SDK
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP_FILE=""
-
-          for file in ./*.zip; do
-            [ -f "$file" ] || continue
-
-            if unzip -Z1 "$file" | grep -qx 'Makefile'; then
-              ZIP_FILE="$file"
-              break
-            fi
-          done
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "::error::No ZIP containing the project Makefile was found at repository root."
-            exit 1
+          if [ ! -f "$THEOS/makefiles/common.mk" ]; then
+            rm -rf "$THEOS"
+            git clone --recursive https://github.com/theos/theos.git "$THEOS"
+          else
+            git -C "$THEOS" submodule update --init --recursive
           fi
 
-          echo "Using archive: $ZIP_FILE"
+          mkdir -p "$THEOS/sdks"
 
-          mkdir -p source
-          unzip -oq "$ZIP_FILE" -d source
+          SDK_REPO="$RUNNER_TEMP/theos-sdks"
+          rm -rf "$SDK_REPO"
+          git clone --depth=1 --filter=blob:none --sparse \
+            https://github.com/theos/sdks.git "$SDK_REPO"
+          git -C "$SDK_REPO" sparse-checkout set iPhoneOS16.5.sdk
 
-          test -f source/Makefile
-          test -f source/Tweak.x
-          test -f source/control
-          test -f source/OverlayIOSTOOL.plist
-          test -f source/Resources/Info.plist
-          test -f source/App/main.m
-          test -f source/App/AppDelegate.m
-          test -f source/App/ViewController.m
-
-          echo "PROJECT_DIR=$GITHUB_WORKSPACE/source" >> "$GITHUB_ENV"
-
-      - name: Validate property lists
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          plutil -lint \
-            "$PROJECT_DIR/Resources/Info.plist" \
-            "$PROJECT_DIR/entitlements.plist" \
-            "$PROJECT_DIR/OverlayIOSTOOL.plist"
-
-      - name: Compile and package rootless build
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$PROJECT_DIR"
-
-          export THEOS="$GITHUB_WORKSPACE/theos"
+          test -d "$SDK_REPO/iPhoneOS16.5.sdk"
+          rm -rf "$THEOS/sdks/iPhoneOS16.5.sdk"
+          ditto "$SDK_REPO/iPhoneOS16.5.sdk" "$THEOS/sdks/iPhoneOS16.5.sdk"
 
           test -f "$THEOS/makefiles/common.mk"
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk/System/Library/Frameworks/UIKit.framework"
+          echo "Theos: $THEOS"
+          echo "Installed SDK: $THEOS/sdks/iPhoneOS16.5.sdk"
 
+      - name: Validate project and toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f Makefile
+          test -f Tweak.x
+          test -f control
+          test -f OverlayIOSTOOL.plist
+          test -f Resources/Info.plist
+          test -f entitlements.plist
+          test -f App/main.m
+          test -f App/AppDelegate.m
+          test -f App/ViewController.m
+          test -f "$THEOS/makefiles/common.mk"
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
+
+          plutil -lint Resources/Info.plist
+          plutil -lint entitlements.plist
+          plutil -lint OverlayIOSTOOL.plist
+
+          command -v make
+          make --version | head -n 1 | grep -q 'GNU Make'
+          grep -q 'TARGET := iphone:clang:16.5:15.0' Makefile
+          grep -q 'THEOS_PACKAGE_SCHEME = rootless' Makefile
+          grep -q 'firmware (>= 15.0)' control
+          grep -q 'firmware (<< 18.0)' control
+
+      - name: Build clean rootless package
+        shell: bash
+        run: |
+          set -euo pipefail
           make clean
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
-      - name: Verify package output
+      - name: Verify Debian package and contents
         shell: bash
         run: |
           set -euo pipefail
-
           shopt -s nullglob
-          packages=("$PROJECT_DIR"/packages/*.deb)
-
-          if [ "${#packages[@]}" -eq 0 ]; then
-            echo "::error::The build did not generate a .deb package."
+          packages=(packages/*.deb)
+          if (( ${#packages[@]} == 0 )); then
+            echo "::error::Theos did not create any packages/*.deb file."
             exit 1
           fi
 
           for package in "${packages[@]}"; do
-            echo "Generated package: $package"
-            file "$package"
+            echo "===== $package ====="
+            dpkg-deb --info "$package"
+            contents="$(dpkg-deb --contents "$package")"
+            printf '%s\n' "$contents"
+            if ! grep -q 'OverlayIOSTOOL.dylib' <<< "$contents"; then
+              echo "::error::The package does not contain OverlayIOSTOOL.dylib."
+              exit 1
+            fi
           done
 
-      - name: Upload compiled package
+      - name: Upload rootless Debian package
         uses: actions/upload-artifact@v4
         with:
-          name: ToolOverlayIOS-rootless-deb
-          path: source/packages/*.deb
+          name: OverlayIOSTOOL-rootless-deb
+          path: packages/*.deb
           if-no-files-found: error
           retention-days: 14
